@@ -4,14 +4,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import Editor from '@monaco-editor/react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
   ResizableHandle, ResizablePanel, ResizablePanelGroup 
 } from "@/components/ui/resizable";
 import { 
-  Play, StepForward, RotateCcw, Hammer, Pause, AlertTriangle, Delete,
-  TerminalSquare, Cpu, Code2, Settings2, FileCode2, Database
+  Play, StepForward, RotateCcw, Hammer, Pause, AlertTriangle,
+  TerminalSquare, Cpu, Code2, Settings2, FileCode2, Database, ZoomIn, ZoomOut
 } from "lucide-react";
 
 import { Memory, TEXT_BASE, DATA_BASE } from '@/core/memory';
@@ -19,7 +18,8 @@ import { CPU, CPUStatus } from '@/core/cpu';
 import { Assembler } from '@/core/assembler';
 
 const DEFAULT_CODE = `# ==============================================================================
-# MIPS COMPILER TESTER (With .equ and .rdata Support)
+# MIPS WEB EMULATOR - FEATURE SHOWCASE
+# Menampilkan: .rdata (Protected), .equ (Konstanta), FPU Float, dan File I/O
 # ==============================================================================
 
 .macro print_str(%str_label)
@@ -28,48 +28,89 @@ const DEFAULT_CODE = `# ========================================================
     syscall
 .end_macro
 
-.macro exit_program()
-    li $v0, 10
-    syscall
-.end_macro
-
-# --- Read-Only Data ---
 .rdata
-    readonly_msg: .asciiz "[Memasuki Area .rdata] Emulator Aman!\\n"
+    # 1. READ-ONLY DATA (Aman dari overwrite CPU)
+    welcome: .asciiz "=== Penghitung Luas Lingkaran ===\\n"
+    prompt:  .asciiz "Masukkan jari-jari (Float): "
+    result:  .asciiz "Luas Lingkaran = "
+    msg_io:  .asciiz "\\nMenyimpan ke file 'hasil.txt' (Cek LocalStorage)...\\n"
+    fname:   .asciiz "hasil.txt"
+    filemsg: .asciiz "Operasi MIPS Berhasil!"
 
-# --- Data Segment & Constants ---
 .data
-    array:      .word 10, 20, 30, 40
-    
-    # MENGHITUNG UKURAN ARRAY DENGAN .equ DAN TITIK (.)
-    .equ ARRAY_SIZE_BYTES, . - array
-    .equ ARRAY_LENGTH, 4
+    # 2. VARIABEL & KONSTANTA (.equ)
+    .equ PI, 3.141592
+    pi_val:  .float PI
 
 .text
 .globl main
 
 main:
-    # Uji coba cetak dari .rdata
-    print_str(readonly_msg)
+    print_str(welcome)
+    print_str(prompt)
 
-    # Uji coba konstanta (ARRAY_LENGTH bernilai 4)
-    li $t0, ARRAY_LENGTH
+    # 3. FPU: Syscall 6 (Read Float, masuk ke $f0)
+    li $v0, 6
+    syscall
+
+    # FPU: Hitung r * r -> $f2
+    mul.s $f2, $f0, $f0
+
+    # FPU: Load PI ke $f1 menggunakan lwc1
+    la $t0, pi_val
+    lwc1 $f1, 0($t0)
+
+    # FPU: PI * (r * r) -> $f12 (Argumen standar Syscall 2)
+    mul.s $f12, $f1, $f2
+
+    # Cetak Hasil Float (Syscall 2)
+    print_str(result)
+    li $v0, 2
+    syscall
+
+    # 4. SIMULASI FILE I/O (Tersimpan murni di LocalStorage)
+    print_str(msg_io)
     
-    exit_program()`;
+    # Open File (Syscall 13)
+    li $v0, 13
+    la $a0, fname
+    li $a1, 1       # Flag Write
+    li $a2, 0       # Mode
+    syscall
+    move $s0, $v0   # Simpan File Descriptor (FD) di $s0
 
-const UI_REGISTERS = [
+    # Write File (Syscall 15)
+    li $v0, 15
+    move $a0, $s0
+    la $a1, filemsg
+    li $a2, 22      # Panjang string
+    syscall
+
+    # Close File (Syscall 16)
+    li $v0, 16
+    move $a0, $s0
+    syscall
+
+    # Exit
+    li $v0, 10
+    syscall
+`;
+
+const UI_GPR = [
   { id: 'pc', name: 'pc' }, { id: 'hi', name: 'hi' }, { id: 'lo', name: 'lo' },
-  { id: 0, name: '$zero ($0)' }, { id: 1, name: '$at ($1)' },
-  { id: 2, name: '$v0 ($2)' }, { id: 3, name: '$v1 ($3)' },
-  { id: 4, name: '$a0 ($4)' }, { id: 5, name: '$a1 ($5)' }, { id: 6, name: '$a2 ($6)' }, { id: 7, name: '$a3 ($7)' },
-  { id: 8, name: '$t0 ($8)' }, { id: 9, name: '$t1 ($9)' }, { id: 10, name: '$t2 ($10)' }, { id: 11, name: '$t3 ($11)' },
-  { id: 12, name: '$t4 ($12)' }, { id: 13, name: '$t5 ($13)' }, { id: 14, name: '$t6 ($14)' }, { id: 15, name: '$t7 ($15)' },
-  { id: 16, name: '$s0 ($16)' }, { id: 17, name: '$s1 ($17)' }, { id: 18, name: '$s2 ($18)' }, { id: 19, name: '$s3 ($19)' },
-  { id: 20, name: '$s4 ($20)' }, { id: 21, name: '$s5 ($21)' }, { id: 22, name: '$s6 ($22)' }, { id: 23, name: '$s7 ($23)' },
-  { id: 24, name: '$t8 ($24)' }, { id: 25, name: '$t9 ($25)' },
-  { id: 26, name: '$k0 ($26)' }, { id: 27, name: '$k1 ($27)' },
-  { id: 28, name: '$gp ($28)' }, { id: 29, name: '$sp ($29)' }, { id: 30, name: '$fp ($30)' }, { id: 31, name: '$ra ($31)' }
+  { id: '0', name: '$zero ($0)' }, { id: '1', name: '$at ($1)' },
+  { id: '2', name: '$v0 ($2)' }, { id: '3', name: '$v1 ($3)' },
+  { id: '4', name: '$a0 ($4)' }, { id: '5', name: '$a1 ($5)' }, { id: '6', name: '$a2 ($6)' }, { id: '7', name: '$a3 ($7)' },
+  { id: '8', name: '$t0 ($8)' }, { id: '9', name: '$t1 ($9)' }, { id: '10', name: '$t2 ($10)' }, { id: '11', name: '$t3 ($11)' },
+  { id: '12', name: '$t4 ($12)' }, { id: '13', name: '$t5 ($13)' }, { id: '14', name: '$t6 ($14)' }, { id: '15', name: '$t7 ($15)' },
+  { id: '16', name: '$s0 ($16)' }, { id: '17', name: '$s1 ($17)' }, { id: '18', name: '$s2 ($18)' }, { id: '19', name: '$s3 ($19)' },
+  { id: '20', name: '$s4 ($20)' }, { id: '21', name: '$s5 ($21)' }, { id: '22', name: '$s6 ($22)' }, { id: '23', name: '$s7 ($23)' },
+  { id: '24', name: '$t8 ($24)' }, { id: '25', name: '$t9 ($25)' },
+  { id: '26', name: '$k0 ($26)' }, { id: '27', name: '$k1 ($27)' },
+  { id: '28', name: '$gp ($28)' }, { id: '29', name: '$sp ($29)' }, { id: '30', name: '$fp ($30)' }, { id: '31', name: '$ra ($31)' }
 ];
+
+const UI_FPR = Array.from({ length: 32 }, (_, i) => ({ id: `f${i}`, name: `$f${i}` }));
 
 export default function MipsEmulatorPage() {
   const [code, setCode] = useState<string>(DEFAULT_CODE);
@@ -82,9 +123,8 @@ export default function MipsEmulatorPage() {
   
   const [activePC, setActivePC] = useState<number>(0);
   const [memorySearchInput, setMemorySearchInput] = useState<string>("00000000");
-  const [isWaitingInput, setIsWaitingInput] = useState(false);
-  const [inputValue, setInputValue] = useState("");
-
+  
+  const [viewFontSize, setViewFontSize] = useState<number>(12);
   const [editorBreakpoints, setEditorBreakpoints] = useState<Set<number>>(new Set());
   const [addressBreakpoints, setAddressBreakpoints] = useState<Set<number>>(new Set());
 
@@ -128,16 +168,16 @@ export default function MipsEmulatorPage() {
         syncUI();
       };
 
-      cpuInstance.current.onInputRequired = () => {
+      cpuInstance.current.onInputRequired = (type) => {
         let inputBuffer = '';
-        term.write('\x1b[33m'); 
+        term.write(type === 'float' ? '\x1b[36m' : '\x1b[33m'); 
         inputDisposable.current = term.onData((data: string) => {
           const code = data.charCodeAt(0);
           if (code === 13) { 
             term.write('\x1b[0m\r\n'); 
-            const val = parseInt(inputBuffer, 10) || 0;
+            const val = type === 'float' ? (parseFloat(inputBuffer) || 0) : (parseInt(inputBuffer, 10) || 0);
             inputDisposable.current?.dispose(); 
-            cpuInstance.current.provideInput(val);
+            cpuInstance.current.provideInput(val, type);
             requestAnimationFrame(executeCycle); 
           } else if (code === 127 || code === 8) { 
             if (inputBuffer.length > 0) {
@@ -164,10 +204,7 @@ export default function MipsEmulatorPage() {
     if (!editorRef.current || !monacoRef.current) return;
     const newDecorations = Array.from(editorBreakpoints).map(line => ({
       range: new monacoRef.current.Range(line, 1, line, 1),
-      options: {
-        isWholeLine: false,
-        glyphMarginClassName: 'breakpoint-glyph'
-      }
+      options: { isWholeLine: false, glyphMarginClassName: 'breakpoint-glyph' }
     }));
     decorationsRef.current = editorRef.current.deltaDecorations(decorationsRef.current, newDecorations);
   }, [editorBreakpoints]);
@@ -196,10 +233,26 @@ export default function MipsEmulatorPage() {
       'hi': (cpu.hi >>> 0).toString(16).padStart(8, '0'),
       'lo': (cpu.lo >>> 0).toString(16).padStart(8, '0')
     };
+    
     for (let i = 0; i < 32; i++) {
-      newRegs[i] = (cpu.registers[i] >>> 0).toString(16).padStart(8, '0');
+      newRegs[i.toString()] = (cpu.registers[i] >>> 0).toString(16).padStart(8, '0');
+    }
+    for (let i = 0; i < 32; i++) {
+      newRegs[`f${i}`] = cpu.fRegisters[i].toFixed(4); 
     }
     setRegValues(newRegs);
+  };
+
+  const toggleBreakpoint = (address: number) => {
+    setAddressBreakpoints(prev => {
+      const newBps = new Set(prev);
+      if (newBps.has(address)) {
+        newBps.delete(address);
+      } else {
+        newBps.add(address);
+      }
+      return newBps;
+    });
   };
 
   const generateMemoryDump = (startAddressHex: string) => {
@@ -208,12 +261,6 @@ export default function MipsEmulatorPage() {
     let startAddr = parseInt(startAddressHex, 16);
     if (isNaN(startAddr)) startAddr = DATA_BASE; 
 
-    const mockElfHeader = [
-      0x7F454C46, 0x01020100, 0x00000000, 0x00000000,
-      0x00020008, 0x00000001, 0x00400000, 0x00000034,
-      0x00000000, 0x00000000, 0x00340020, 0x00010028
-    ];
-
     for (let i = 0; i < 16; i++) {
       const addr = startAddr + (i * 16);
       const words = [];
@@ -221,11 +268,7 @@ export default function MipsEmulatorPage() {
 
       for (let w = 0; w < 4; w++) {
         let wordVal = 0;
-        if (addr + (w * 4) < mockElfHeader.length * 4 && startAddr < 0x00400000) {
-           wordVal = mockElfHeader[(addr + (w * 4)) / 4];
-        } else {
-           try { wordVal = mem.read32(addr + (w * 4)); } catch (e) { wordVal = 0; }
-        }
+        try { wordVal = mem.read32(addr + (w * 4)); } catch (e) { wordVal = 0; }
 
         words.push(wordVal.toString(16).padStart(8, '0'));
         for (let b = 0; b < 4; b++) {
@@ -254,7 +297,7 @@ export default function MipsEmulatorPage() {
       const newAddressBps = new Set<number>();
       
       for (const inst of compiled.instructions) {
-        memoryInstance.current.write32(inst.address, inst.machineCode);
+        memoryInstance.current.load32(inst.address, inst.machineCode);
         newDisasm.push({
           address: inst.address,
           addressHex: inst.address.toString(16).padStart(8, '0'),
@@ -270,14 +313,14 @@ export default function MipsEmulatorPage() {
 
       for (const data of compiled.data) {
         for (let i = 0; i < data.data.length; i++) {
-          memoryInstance.current.write8(data.address + i, data.data[i]);
+          memoryInstance.current.load8(data.address + i, data.data[i]);
         }
       }
       
       generateMemoryDump(memorySearchInput);
       syncUI();
       setIsCompiled(true);
-      xtermInstance.current.writeln('\x1b[32m[Success]\x1b[0m Binary compiled as MIPS ELF object.');
+      xtermInstance.current.writeln('\x1b[32m[Success]\x1b[0m Binary compiled successfully.');
       return true;
     } catch (err: any) {
       xtermInstance.current.writeln(`\x1b[31m[Assembler Error] ${err.message}\x1b[0m`);
@@ -303,9 +346,8 @@ export default function MipsEmulatorPage() {
         if (status !== 'RUNNING') break;
       }
 
-      if (status === 'RUNNING') {
-         requestAnimationFrame(executeCycle);
-      } else if (status === 'HALTED') {
+      if (status === 'RUNNING') requestAnimationFrame(executeCycle);
+      else if (status === 'HALTED') {
          setIsRunning(false);
          syncUI(); 
       }
@@ -342,7 +384,6 @@ export default function MipsEmulatorPage() {
     }
   };
 
-  // --- FUNGSI RESET SYSTEM YANG JELAS ---
   const handleResetCPU = () => {
     cpuInstance.current.reset();
     isResumingRef.current = false;
@@ -367,11 +408,23 @@ export default function MipsEmulatorPage() {
     setMemoryDump([]);
     syncUI();
     xtermInstance.current?.clear();
+    
+    // BARU: Menghapus File LocalStorage MIPS (Reset Hard Disk Virtual)
+    let deletedFiles = 0;
+    Object.keys(localStorage).forEach(key => {
+      if (key.startsWith('mips_fs_')) {
+        localStorage.removeItem(key);
+        deletedFiles++;
+      }
+    });
+
     xtermInstance.current?.writeln('\x1b[32m[System]\x1b[0m MIPS32 OS Ready (Total Reset).');
+    if (deletedFiles > 0) {
+      xtermInstance.current?.writeln(`\x1b[36m$ Cleaned up ${deletedFiles} virtual file(s) from LocalStorage.\x1b[0m`);
+    }
   };
 
   return (
-    // Membatasi min-w-[960px] untuk memastikan tampilan tidak rusak di perangkat yang terlalu kecil, namun pas di Tablet.
     <div className="flex h-screen flex-col bg-zinc-950 text-zinc-300 font-sans min-w-[960px] overflow-x-auto overflow-y-hidden">
       <style>{`
         .breakpoint-glyph { background-color: #ef4444; border-radius: 50%; width: 10px !important; height: 10px !important; margin-left: 5px; margin-top: 5px; cursor: pointer; box-shadow: 0 0 8px rgba(239,68,68,0.5); }
@@ -384,27 +437,21 @@ export default function MipsEmulatorPage() {
           </div>
           <div>
             <h1 className="text-sm font-semibold text-zinc-100">MIPS Web Emulator</h1>
-            <p className="text-[10px] text-zinc-500 font-mono">v1.0.0-beta</p>
+            <p className="text-[10px] text-zinc-500 font-mono">v1.0.0-release</p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          {/* RESET SYSTEM UX yang lebih rapi */}
           <div className="flex items-center bg-zinc-900/50 p-1 rounded-lg border border-zinc-800/80">
             <span className="text-[10px] uppercase text-zinc-600 font-bold px-2">System:</span>
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetCPU} title="Reset PC & Registers">
-               Reset CPU
-            </Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetMemory} title="Clear Data & RAM">
-               Clear RAM
-            </Button>
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetCPU} title="Reset PC & Registers">Reset CPU</Button>
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetMemory} title="Clear Data & RAM">Clear RAM</Button>
             <div className="w-px h-4 bg-zinc-700 mx-1"></div>
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-400/10" onClick={handleResetAll} title="Hard Reset System">
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-400/10" onClick={handleResetAll} title="Hard Reset System & Disk">
                <AlertTriangle className="w-3.5 h-3.5 mr-1" /> Hard Reset
             </Button>
           </div>
 
-          {/* EKSEKUSI CONTROLS */}
           <div className="flex items-center gap-1 bg-zinc-900/80 p-1 rounded-lg border border-zinc-800/80">
             <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5 text-zinc-300 hover:text-white" onClick={handleBuild} disabled={isRunning}>
               <Hammer className="w-3.5 h-3.5" /> Build
@@ -424,6 +471,7 @@ export default function MipsEmulatorPage() {
       </header>
 
       <div className="flex-1 overflow-hidden">
+        {/* @ts-ignore: Mengabaikan strict typing error bawaan library untuk properti direction */}
         <ResizablePanelGroup direction="horizontal">
           
           <ResizablePanel defaultSize={20} minSize={15} className="bg-zinc-950/80">
@@ -433,11 +481,26 @@ export default function MipsEmulatorPage() {
                 <span className="text-xs font-semibold uppercase tracking-wider">Registers</span>
               </div>
               <ScrollArea className="flex-1 p-2 space-y-0.5">
-                {UI_REGISTERS.map((reg) => (
+                <div className="sticky top-0 bg-zinc-950/90 backdrop-blur z-10 py-1 border-b border-zinc-800/50 mb-1">
+                   <span className="text-[10px] font-bold text-zinc-500 px-2 uppercase tracking-widest">Integer (GPR)</span>
+                </div>
+                {UI_GPR.map((reg) => (
                   <div key={reg.id} className="flex justify-between items-center py-1.5 px-2 hover:bg-zinc-800/80 group rounded transition-colors cursor-default">
                     <span className="font-mono text-[11px] text-zinc-400 group-hover:text-zinc-200">{reg.name}</span>
                     <span className="font-mono text-[11px] text-emerald-400/80 group-hover:text-emerald-400">
                       {regValues[reg.id] || '00000000'}
+                    </span>
+                  </div>
+                ))}
+
+                <div className="sticky top-0 bg-zinc-950/90 backdrop-blur z-10 py-1 border-b border-zinc-800/50 mt-4 mb-1">
+                   <span className="text-[10px] font-bold text-zinc-500 px-2 uppercase tracking-widest">Float (FPU)</span>
+                </div>
+                {UI_FPR.map((reg) => (
+                  <div key={reg.id} className="flex justify-between items-center py-1.5 px-2 hover:bg-zinc-800/80 group rounded transition-colors cursor-default">
+                    <span className="font-mono text-[11px] text-zinc-400 group-hover:text-zinc-200">{reg.name}</span>
+                    <span className="font-mono text-[11px] text-cyan-400/80 group-hover:text-cyan-400">
+                      {regValues[reg.id] || '0.0000'}
                     </span>
                   </div>
                 ))}
@@ -448,11 +511,11 @@ export default function MipsEmulatorPage() {
           <ResizableHandle withHandle className="w-1 bg-zinc-800 hover:bg-emerald-500/50" />
 
           <ResizablePanel defaultSize={50} minSize={30} className="bg-zinc-950 flex flex-col min-w-0">
-            <Tabs defaultValue="main.s" className="flex-1 flex flex-col h-full">
+            <Tabs defaultValue="code" className="flex-1 flex flex-col h-full">
               <div className="bg-zinc-900 border-b border-zinc-800 px-2 pt-1.5 flex items-end">
                 <TabsList className="bg-transparent border-none p-0 h-8 flex gap-1.5">
-                  <TabsTrigger value="main.s" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white data-[state=active]:border-zinc-700 data-[state=active]:border-b-zinc-950 data-[state=active]:bg-zinc-950 data-[state=active]:text-emerald-400 text-xs px-4 transition-colors">
-                    <Code2 className="w-3.5 h-3.5 mr-2" /> main.s
+                  <TabsTrigger value="code" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white data-[state=active]:border-zinc-700 data-[state=active]:border-b-zinc-950 data-[state=active]:bg-zinc-950 data-[state=active]:text-emerald-400 text-xs px-4 transition-colors">
+                    <Code2 className="w-3.5 h-3.5 mr-2" /> Code
                   </TabsTrigger>
                   <TabsTrigger value="disassembly" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white data-[state=active]:border-zinc-700 data-[state=active]:border-b-zinc-950 data-[state=active]:bg-zinc-950 data-[state=active]:text-emerald-400 text-xs px-4 transition-colors">
                     <FileCode2 className="w-3.5 h-3.5 mr-2" /> Disassembly
@@ -463,11 +526,19 @@ export default function MipsEmulatorPage() {
                 </TabsList>
               </div>
               
-              <TabsContent value="main.s" className="flex-1 m-0 h-full p-0 border-none outline-none">
+              <TabsContent value="code" className="flex-1 m-0 h-full p-0 border-none outline-none">
                 <Editor height="100%" language="mips" theme="vs-dark" value={code} onChange={(val) => setCode(val || "")} onMount={handleEditorDidMount} options={{ minimap: { enabled: false }, fontSize: 14, fontFamily: "'Geist Mono', monospace", padding: { top: 16 }, glyphMargin: true }} />
               </TabsContent>
               
               <TabsContent value="disassembly" className="flex-1 m-0 flex flex-col bg-zinc-950 overflow-hidden outline-none data-[state=active]:flex">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/40 shrink-0">
+                  <span className="text-xs text-zinc-400">Click a line to set a Breakpoint.</span>
+                  <div className="flex items-center gap-1">
+                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.max(10, viewFontSize - 1))}><ZoomOut className="w-3.5 h-3.5"/></Button>
+                     <span className="text-[10px] text-zinc-500 font-mono w-6 text-center">{viewFontSize}px</span>
+                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.min(24, viewFontSize + 1))}><ZoomIn className="w-3.5 h-3.5"/></Button>
+                  </div>
+                </div>
                 <div className="flex-1 overflow-auto relative">
                   <table className="w-full text-left border-collapse">
                     <thead className="sticky top-0 bg-zinc-900/95 backdrop-blur z-10 border-b border-zinc-800">
@@ -477,21 +548,21 @@ export default function MipsEmulatorPage() {
                         <th className="px-3 py-1.5 text-xs font-semibold text-zinc-300 border-l border-zinc-800">Disassembly</th>
                       </tr>
                     </thead>
-                    <tbody className="font-mono text-xs">
+                    <tbody className="font-mono" style={{ fontSize: `${viewFontSize}px` }}>
                       {disassembly.length === 0 ? (
-                         <tr><td colSpan={3} className="p-4 text-center text-zinc-600 italic">Compile code to view disassembly</td></tr>
+                         <tr><td colSpan={3} className="p-4 text-center text-zinc-600 italic text-xs">Compile code to view disassembly</td></tr>
                       ) : (
                         disassembly.map((row, idx) => {
                           const isActive = row.address === activePC;
                           const isBp = addressBreakpoints.has(row.address);
                           return (
                             <tr key={idx} onClick={() => toggleBreakpoint(row.address)} className={`${isActive ? 'bg-yellow-500/20 text-yellow-300' : 'hover:bg-zinc-800/30 text-zinc-400'} border-b border-zinc-900/50 cursor-pointer`}>
-                              <td className="px-3 py-1 flex items-center">
+                              <td className="px-3 py-1.5 flex items-center">
                                 <div className={`w-2 h-2 rounded-full mr-2 flex-shrink-0 ${isBp ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]' : 'bg-transparent'}`}></div>
                                 {row.addressHex}
                               </td>
-                              <td className="px-3 py-1 text-zinc-500 border-l border-zinc-900/50">{row.opcode}</td>
-                              <td className="px-3 py-1 border-l border-zinc-900/50 whitespace-pre">{row.instruction}</td>
+                              <td className="px-3 py-1.5 text-zinc-500 border-l border-zinc-900/50">{row.opcode}</td>
+                              <td className="px-3 py-1.5 border-l border-zinc-900/50 whitespace-pre">{row.instruction}</td>
                             </tr>
                           );
                         })
@@ -502,10 +573,17 @@ export default function MipsEmulatorPage() {
               </TabsContent>
 
               <TabsContent value="memory" className="flex-1 m-0 flex flex-col bg-zinc-950 overflow-hidden outline-none data-[state=active]:flex">
-                <div className="flex items-center gap-2 px-3 py-2 border-b border-zinc-800 bg-zinc-900/40 shrink-0">
-                  <span className="text-xs text-zinc-400">Go to Hex address: 0x</span>
-                  <input type="text" value={memorySearchInput} onChange={(e) => setMemorySearchInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && generateMemoryDump(memorySearchInput)} className="h-7 w-24 bg-zinc-950 border border-zinc-700 rounded px-2 text-xs font-mono text-zinc-300 outline-none focus:border-emerald-500" placeholder="10010000" />
-                  <Button variant="secondary" size="sm" className="h-7 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300" onClick={() => generateMemoryDump(memorySearchInput)}>Refresh</Button>
+                <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/40 shrink-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-zinc-400">Go to Hex address: 0x</span>
+                    <input type="text" value={memorySearchInput} onChange={(e) => setMemorySearchInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && generateMemoryDump(memorySearchInput)} className="h-7 w-24 bg-zinc-950 border border-zinc-700 rounded px-2 text-xs font-mono text-zinc-300 outline-none focus:border-emerald-500" placeholder="10010000" />
+                    <Button variant="secondary" size="sm" className="h-7 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300" onClick={() => generateMemoryDump(memorySearchInput)}>Refresh</Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.max(10, viewFontSize - 1))}><ZoomOut className="w-3.5 h-3.5"/></Button>
+                     <span className="text-[10px] text-zinc-500 font-mono w-6 text-center">{viewFontSize}px</span>
+                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.min(24, viewFontSize + 1))}><ZoomIn className="w-3.5 h-3.5"/></Button>
+                  </div>
                 </div>
                 <div className="flex-1 overflow-auto relative">
                   <table className="w-full text-left border-collapse">
@@ -515,14 +593,14 @@ export default function MipsEmulatorPage() {
                         <th className="px-3 py-1.5 text-xs font-semibold text-zinc-300 border-l border-zinc-800">Memory contents and ASCII</th>
                       </tr>
                     </thead>
-                    <tbody className="font-mono text-[11px] text-zinc-400">
+                    <tbody className="font-mono" style={{ fontSize: `${viewFontSize}px` }}>
                       {memoryDump.length === 0 ? (
-                         <tr><td colSpan={2} className="p-4 text-center text-zinc-600 italic">Compile code to view memory</td></tr>
+                         <tr><td colSpan={2} className="p-4 text-center text-zinc-600 italic text-xs">Compile code to view memory</td></tr>
                       ) : (
                         memoryDump.map((row, idx) => (
                           <tr key={idx} className="border-b border-zinc-900/50 hover:bg-zinc-800/30">
-                            <td className="px-3 py-1 font-semibold">{row.address}</td>
-                            <td className="px-3 py-1 border-l border-zinc-900/50 flex gap-4 items-center">
+                            <td className="px-3 py-1.5 font-semibold text-zinc-400">{row.address}</td>
+                            <td className="px-3 py-1.5 border-l border-zinc-900/50 flex gap-4 items-center">
                               <span className="text-zinc-300 tracking-widest min-w-[280px]">
                                 {row.words.map((w: string, i: number) => <span key={i} className={w === '00000000' ? 'text-zinc-600' : 'text-zinc-200'}>{w}{i < 3 ? '  ' : ''}</span>)}
                               </span>

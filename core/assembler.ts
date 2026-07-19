@@ -1,12 +1,11 @@
-export const SEGMENT_TEXT_START = 0x00400000;
-export const SEGMENT_DATA_START = 0x10010000;
+import { TEXT_BASE, DATA_BASE, RDATA_BASE } from './memory';
 
 export interface AssembledInstruction {
   address: number;
   machineCode: number;
   hexString: string;
   originalText: string;
-  originalLine: number; // Mapping ke baris di Monaco Editor
+  originalLine: number; 
 }
 
 export interface AssembledData {
@@ -29,22 +28,29 @@ const REG_MAP: Record<string, number> = {
   '$s4': 20, '$20': 20, '$s5': 21, '$21': 21, '$s6': 22, '$22': 22, '$s7': 23, '$23': 23,
   '$t8': 24, '$24': 24, '$t9': 25, '$25': 25,
   '$k0': 26, '$26': 26, '$k1': 27, '$27': 27,
-  '$gp': 28, '$28': 28, '$sp': 29, '$29': 29, '$fp': 30, '$30': 30, '$ra': 31, '$31': 31
+  '$gp': 28, '$28': 28, '$sp': 29, '$29': 29, '$fp': 30, '$30': 30, '$ra': 31, '$31': 31,
+  '$f0': 0, '$f1': 1, '$f2': 2, '$f3': 3, '$f4': 4, '$f5': 5, '$f6': 6, '$f7': 7,
+  '$f8': 8, '$f9': 9, '$f10': 10, '$f11': 11, '$f12': 12, '$f13': 13, '$f14': 14, '$f15': 15,
+  '$f16': 16, '$f17': 17, '$f18': 18, '$f19': 19, '$f20': 20, '$f21': 21, '$f22': 22, '$f23': 23,
+  '$f24': 24, '$f25': 25, '$f26': 26, '$f27': 27, '$f28': 28, '$f29': 29, '$f30': 30, '$f31': 31
 };
 
 export class Assembler {
   private symbolTable: Map<string, number>;
+  private equMap: Map<string, { expr: string, addr: number }>;
   private instructions: AssembledInstruction[];
   private dataSegment: AssembledData[];
 
   constructor() {
     this.symbolTable = new Map();
+    this.equMap = new Map();
     this.instructions = [];
     this.dataSegment = [];
   }
 
   public compile(sourceCode: string) {
     this.symbolTable.clear();
+    this.equMap.clear();
     this.instructions = [];
     this.dataSegment = [];
 
@@ -109,15 +115,13 @@ export class Assembler {
               const paramRegex = new RegExp(param.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
               expandedText = expandedText.replace(paramRegex, providedArgs[index] || '');
             });
-            expandedLines.push({ text: expandedText, lineNo }); // Map ke baris pemanggilan macro
+            expandedLines.push({ text: expandedText, lineNo });
           }
           break;
         }
       }
 
-      if (!isMacroInvocation) {
-        expandedLines.push({ text: line, lineNo });
-      }
+      if (!isMacroInvocation) expandedLines.push({ text: line, lineNo });
     });
 
     return expandedLines;
@@ -125,64 +129,106 @@ export class Assembler {
 
   private passOne(lines: LineNode[]) {
     let currentSegment = '.text';
-    let textAddress = SEGMENT_TEXT_START;
-    let dataAddress = SEGMENT_DATA_START;
+    let textAddress = TEXT_BASE;
+    let dataAddress = DATA_BASE;
+    let rdataAddress = RDATA_BASE;
+
+    const getCurrAddress = () => currentSegment === '.text' ? textAddress : (currentSegment === '.rdata' ? rdataAddress : dataAddress);
+    const advanceData = (size: number) => {
+       if (currentSegment === '.rdata') rdataAddress += size;
+       else dataAddress += size;
+    };
 
     for (const node of lines) {
       let line = this.cleanLine(node.text);
       if (!line) continue;
-      if (line === '.text' || line === '.data') { currentSegment = line; continue; }
+      
+      if (line === '.text' || line === '.data' || line === '.rdata') { 
+        currentSegment = line; 
+        continue; 
+      }
+      
+      const equMatch = line.match(/^\.equ\s+([a-zA-Z_0-9]+)\s*,\s*(.+)$/) || line.match(/^([a-zA-Z_0-9]+)\s*=\s*(.+)$/);
+      if (equMatch) {
+        this.equMap.set(equMatch[1], { expr: equMatch[2], addr: getCurrAddress() });
+        continue;
+      }
+
       if (line.startsWith('.set') || line.startsWith('.global') || line.startsWith('.globl')) continue;
 
       const labelMatch = line.match(/^([a-zA-Z_0-9]+):(.*)$/);
       if (labelMatch) {
-        this.symbolTable.set(labelMatch[1], currentSegment === '.text' ? textAddress : dataAddress);
+        this.symbolTable.set(labelMatch[1], getCurrAddress());
         line = labelMatch[2].trim();
         if (!line) continue;
       }
 
       if (currentSegment === '.text') {
         const opcode = line.split(/\s+/)[0].toLowerCase();
-        if (opcode === 'la') textAddress += 8;
+        if (opcode === 'la') textAddress += 8; 
         else if (['bgt', 'blt', 'bge', 'ble'].includes(opcode)) textAddress += 8; 
         else textAddress += 4;
-      } else if (currentSegment === '.data') {
+      } else {
+        const dAddr = getCurrAddress();
         if (line.startsWith('.asciiz')) {
           const strMatch = line.match(/\.asciiz\s+"(.*)"/);
-          if (strMatch) dataAddress += strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').length + 1;
+          if (strMatch) advanceData(strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').length + 1);
         } else if (line.startsWith('.ascii ') && !line.startsWith('.asciiz')) {
           const strMatch = line.match(/\.ascii\s+"(.*)"/);
-          if (strMatch) dataAddress += strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').length;
+          if (strMatch) advanceData(strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').length);
         } else if (line.startsWith('.byte')) {
-          dataAddress += line.substring(5).split(',').length;
+          advanceData(line.substring(5).split(',').length);
         } else if (line.startsWith('.half')) {
-          dataAddress += ((2 - (dataAddress % 2)) % 2) + (line.substring(5).split(',').length * 2);
-        } else if (line.startsWith('.word')) {
-          dataAddress += ((4 - (dataAddress % 4)) % 4) + (line.substring(5).split(',').length * 4);
+          const padding = (2 - (dAddr % 2)) % 2;
+          advanceData(padding + (line.substring(5).split(',').length * 2));
+        } else if (line.startsWith('.word') || line.startsWith('.float')) {
+          const padding = (4 - (dAddr % 4)) % 4;
+          advanceData(padding + (line.substring(6).split(',').length * 4));
         } else if (line.startsWith('.space')) {
-          dataAddress += parseInt(line.substring(6).trim(), 10);
+          advanceData(parseInt(line.substring(6).trim(), 10));
         } else if (line.startsWith('.align')) {
           const n = parseInt(line.substring(6).trim(), 10);
           const bound = Math.pow(2, n);
-          dataAddress += (bound - (dataAddress % bound)) % bound;
+          advanceData((bound - (dAddr % bound)) % bound);
         }
+      }
+    }
+
+    for (const [sym, data] of this.equMap.entries()) {
+      let e = data.expr.replace(/(?<=^|[\s+\-*/()])\.(?=[\s+\-*/()]|$)/g, data.addr.toString());
+      const sortedLabels = Array.from(this.symbolTable.keys()).sort((a,b) => b.length - a.length);
+      for (const label of sortedLabels) {
+        e = e.replace(new RegExp(`\\b${label}\\b`, 'g'), this.symbolTable.get(label)!.toString());
+      }
+      try {
+        const val = new Function('return (' + e + ')')();
+        this.symbolTable.set(sym, val);
+      } catch (err) {
+        throw new Error(`[Assembler Error] Failed to evaluate .equ expression: ${data.expr}`);
       }
     }
   }
 
   private passTwo(lines: LineNode[]) {
     let currentSegment = '.text';
-    let textAddress = SEGMENT_TEXT_START;
-    let dataAddress = SEGMENT_DATA_START;
+    let textAddress = TEXT_BASE;
+    let dataAddress = DATA_BASE;
+    let rdataAddress = RDATA_BASE;
+
+    const pushData = (bytes: Uint8Array, addr: number) => {
+      this.dataSegment.push({ address: addr, data: bytes });
+    };
 
     for (const node of lines) {
       const originalText = node.text;
       let line = this.cleanLine(originalText);
       
-      if (!line || line === '.text' || line === '.data') {
-        if (line === '.text' || line === '.data') currentSegment = line;
-        continue;
+      if (!line) continue;
+      if (line === '.text' || line === '.data' || line === '.rdata') {
+        currentSegment = line; continue;
       }
+      if (line.match(/^\.equ\s+/) || line.match(/^([a-zA-Z_0-9]+)\s*=/)) continue;
+
       line = line.replace(/^([a-zA-Z_0-9]+):\s*/, '');
       if (!line || line.startsWith('.set') || line.startsWith('.global') || line.startsWith('.globl')) continue;
 
@@ -194,62 +240,86 @@ export class Assembler {
             machineCode: code,
             hexString: code.toString(16).padStart(8, '0'),
             originalText: originalText.trim(),
-            originalLine: node.lineNo // Simpan referensi ke baris asli di editor
+            originalLine: node.lineNo
           });
           textAddress += 4;
         }
-      } else if (currentSegment === '.data') {
+      } else {
+        let dAddr = currentSegment === '.rdata' ? rdataAddress : dataAddress;
+        
         if (line.startsWith('.asciiz')) {
           const strMatch = line.match(/\.asciiz\s+"(.*)"/);
           if (strMatch) {
-            let str = strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+            const str = strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t');
             const bytes = new Uint8Array(str.length + 1);
             for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i);
-            this.dataSegment.push({ address: dataAddress, data: bytes });
-            dataAddress += bytes.length;
+            pushData(bytes, dAddr);
+            dAddr += bytes.length;
           }
         } else if (line.startsWith('.ascii ') && !line.startsWith('.asciiz')) {
           const strMatch = line.match(/\.ascii\s+"(.*)"/);
           if (strMatch) {
-            let str = strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+            const str = strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t');
             const bytes = new Uint8Array(str.length);
             for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i);
-            this.dataSegment.push({ address: dataAddress, data: bytes });
-            dataAddress += bytes.length;
+            pushData(bytes, dAddr);
+            dAddr += bytes.length;
           }
         } else if (line.startsWith('.byte')) {
-          const values = line.substring(5).split(',').map(v => Number(v.trim()));
-          this.dataSegment.push({ address: dataAddress, data: new Uint8Array(values) });
-          dataAddress += values.length;
+          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim()));
+          pushData(new Uint8Array(values), dAddr);
+          dAddr += values.length;
         } else if (line.startsWith('.half')) {
-          const padding = (2 - (dataAddress % 2)) % 2;
-          dataAddress += padding;
-          const values = line.substring(5).split(',').map(v => Number(v.trim()));
+          const padding = (2 - (dAddr % 2)) % 2;
+          dAddr += padding;
+          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim()));
           const bytes = new Uint8Array(values.length * 2);
           const view = new DataView(bytes.buffer);
           for (let i = 0; i < values.length; i++) view.setUint16(i * 2, values[i] >>> 0, false);
-          this.dataSegment.push({ address: dataAddress, data: bytes });
-          dataAddress += bytes.length;
+          pushData(bytes, dAddr);
+          dAddr += bytes.length;
         } else if (line.startsWith('.word')) {
-          const padding = (4 - (dataAddress % 4)) % 4;
-          dataAddress += padding;
-          const values = line.substring(5).split(',').map(v => Number(v.trim()));
+          const padding = (4 - (dAddr % 4)) % 4;
+          dAddr += padding;
+          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim()));
           const bytes = new Uint8Array(values.length * 4);
           const view = new DataView(bytes.buffer);
           for (let i = 0; i < values.length; i++) view.setUint32(i * 4, values[i] >>> 0, false);
-          this.dataSegment.push({ address: dataAddress, data: bytes });
-          dataAddress += bytes.length;
+          pushData(bytes, dAddr);
+          dAddr += bytes.length;
+        } else if (line.startsWith('.float')) {
+          const padding = (4 - (dAddr % 4)) % 4;
+          dAddr += padding;
+          // PERBAIKAN: .float sekarang memvalidasi symbol table terlebih dahulu
+          const values = line.substring(6).split(',').map(v => {
+            const token = v.trim();
+            return this.symbolTable.has(token) ? this.symbolTable.get(token)! : parseFloat(token);
+          });
+          const bytes = new Uint8Array(values.length * 4);
+          const view = new DataView(bytes.buffer);
+          for (let i = 0; i < values.length; i++) view.setFloat32(i * 4, values[i], false);
+          pushData(bytes, dAddr);
+          dAddr += bytes.length;
         } else if (line.startsWith('.space')) {
-          const size = parseInt(line.substring(6).trim(), 10);
-          this.dataSegment.push({ address: dataAddress, data: new Uint8Array(size) });
-          dataAddress += size;
+          const size = this.parseImm(line.substring(6).trim());
+          pushData(new Uint8Array(size), dAddr);
+          dAddr += size;
         } else if (line.startsWith('.align')) {
           const n = parseInt(line.substring(6).trim(), 10);
           const bound = Math.pow(2, n);
-          dataAddress += (bound - (dataAddress % bound)) % bound;
+          dAddr += (bound - (dAddr % bound)) % bound;
         }
+
+        if (currentSegment === '.rdata') rdataAddress = dAddr;
+        else dataAddress = dAddr;
       }
     }
+  }
+
+  private parseImm(val: string): number {
+    if (this.symbolTable.has(val)) return this.symbolTable.get(val)!;
+    if (val.toLowerCase().startsWith('0x')) return parseInt(val, 16);
+    return parseInt(val, 10);
   }
 
   private encodeInstruction(instruction: string, pc: number): number[] {
@@ -258,13 +328,13 @@ export class Assembler {
     const getReg = (regName: string) => REG_MAP[regName] || 0;
 
     const parseMemArg = (arg: string) => {
-      const match = arg.match(/^(-?(?:0x[0-9a-fA-F]+|\d+))\(([a-zA-Z0-9_$]+)\)$/);
-      if (match) return { offset: Number(match[1]) & 0xFFFF, reg: getReg(match[2]) };
+      const match = arg.match(/^(-?(?:0x[0-9a-fA-F]+|\d+|[a-zA-Z_0-9]+))\(([a-zA-Z0-9_$]+)\)$/);
+      if (match) return { offset: this.parseImm(match[1]) & 0xFFFF, reg: getReg(match[2]) };
       return { offset: 0, reg: 0 };
     };
 
     switch (opcode) {
-      case 'li': return [(9 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (Number(parts[2]) & 0xFFFF)];
+      case 'li': return [(9 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[2]) & 0xFFFF)];
       case 'la': 
         const rtLa = getReg(parts[1]);
         const laAddr = this.symbolTable.get(parts[2]) || 0;
@@ -283,20 +353,20 @@ export class Assembler {
       case 'or':    return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x25];
       case 'mult':  return [(0 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | (0 << 11) | 0x18];
       case 'div':   return [(0 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | (0 << 11) | 0x1A];
-      case 'sll':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((Number(parts[3]) & 0x1F) << 6) | 0x00];
-      case 'srl':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((Number(parts[3]) & 0x1F) << 6) | 0x02];
+      case 'sll':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((this.parseImm(parts[3]) & 0x1F) << 6) | 0x00];
+      case 'srl':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((this.parseImm(parts[3]) & 0x1F) << 6) | 0x02];
       case 'slt':   return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x2A];
       case 'mflo':  return [(0 << 26) | (0 << 21) | (0 << 16) | (getReg(parts[1]) << 11) | 0x12];
       case 'mfhi':  return [(0 << 26) | (0 << 21) | (0 << 16) | (getReg(parts[1]) << 11) | 0x10];
       case 'mul':   return [(28 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x02];
 
-      case 'addi':  return [(8 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (Number(parts[3]) & 0xFFFF)];
-      case 'addiu': return [(9 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (Number(parts[3]) & 0xFFFF)];
-      case 'andi':  return [(12 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (Number(parts[3]) & 0xFFFF)];
-      case 'ori':   return [(13 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (Number(parts[3]) & 0xFFFF)];
-      case 'xori':  return [(14 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (Number(parts[3]) & 0xFFFF)];
-      case 'lui':   return [(15 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (Number(parts[2]) & 0xFFFF)];
-      case 'slti':  return [(10 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (Number(parts[3]) & 0xFFFF)];
+      case 'addi':  return [(8 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
+      case 'addiu': return [(9 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
+      case 'andi':  return [(12 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
+      case 'ori':   return [(13 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
+      case 'xori':  return [(14 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
+      case 'lui':   return [(15 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[2]) & 0xFFFF)];
+      case 'slti':  return [(10 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
 
       case 'sw':    
       case 'lw':    
@@ -339,7 +409,24 @@ export class Assembler {
         ];
       }
 
-      default: return [0x00000000];
+      case 'mfc1': return [(17 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (getReg(parts[2]) << 11) | 0x00];
+      case 'mtc1': return [(17 << 26) | (4 << 21) | (getReg(parts[1]) << 16) | (getReg(parts[2]) << 11) | 0x00];
+      case 'lwc1': {
+        const memLw = parseMemArg(parts[2]);
+        return [(49 << 26) | (memLw.reg << 21) | (getReg(parts[1]) << 16) | memLw.offset];
+      }
+      case 'swc1': {
+        const memSw = parseMemArg(parts[2]);
+        return [(57 << 26) | (memSw.reg << 21) | (getReg(parts[1]) << 16) | memSw.offset];
+      }
+      case 'add.s': return [(17 << 26) | (16 << 21) | (getReg(parts[3]) << 16) | (getReg(parts[2]) << 11) | (getReg(parts[1]) << 6) | 0x00];
+      case 'sub.s': return [(17 << 26) | (16 << 21) | (getReg(parts[3]) << 16) | (getReg(parts[2]) << 11) | (getReg(parts[1]) << 6) | 0x01];
+      case 'mul.s': return [(17 << 26) | (16 << 21) | (getReg(parts[3]) << 16) | (getReg(parts[2]) << 11) | (getReg(parts[1]) << 6) | 0x02];
+      case 'div.s': return [(17 << 26) | (16 << 21) | (getReg(parts[3]) << 16) | (getReg(parts[2]) << 11) | (getReg(parts[1]) << 6) | 0x03];
+
+      default: 
+        console.warn(`[Assembler] Unrecognized instruction: ${instruction}`);
+        return [0x00000000];
     }
   }
 
