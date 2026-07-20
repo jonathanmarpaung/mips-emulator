@@ -1,253 +1,152 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import dynamic from 'next/dynamic';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { 
-  ResizableHandle, ResizablePanel, ResizablePanelGroup 
-} from "@/components/ui/resizable";
+import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable";
 import { 
   Play, StepForward, RotateCcw, Hammer, Pause, AlertTriangle,
-  TerminalSquare, Cpu, Code2, Settings2, FileCode2, Database, ZoomIn, ZoomOut
+  Cpu, Code2, Settings2, FileCode2, Database, Menu, TerminalSquare
 } from "lucide-react";
 
-import { Memory, TEXT_BASE, DATA_BASE } from '@/core/memory';
+import { Memory, DATA_BASE, TEXT_BASE } from '@/core/memory';
 import { CPU, CPUStatus } from '@/core/cpu';
 import { Assembler } from '@/core/assembler';
 
-const MonacoEditor = dynamic(() => import('@monaco-editor/react'), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-full flex flex-col items-center justify-center bg-[#1e1e1e]">
-      <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3"></div>
-      <span className="text-xs text-zinc-500 font-mono animate-pulse">Load Editor...</span>
-    </div>
-  )
-});
+// Import Components
+import { Sidebar } from '@/components/emulator/Sidebar';
+import { EditorView } from '@/components/emulator/EditorView';
+import { DisassemblyView } from '@/components/emulator/DisassemblyView';
+import { MemoryView } from '@/components/emulator/MemoryView';
+import { TerminalView } from '@/components/emulator/TerminalView';
 
 const DEFAULT_CODE = `# ==============================================================================
-# MIPS WEB EMULATOR - FEATURE SHOWCASE
-# Menampilkan: .rdata (Protected), .equ (Konstanta), FPU Float, dan File I/O
+# MIPS WEB EMULATOR - PROFESSIONAL IDE
+# Program: Fibonacci Sequence Generator
+# Demonstrasi: Subrutin (jal/jr), Loop (bge/j), dan Entry Point (.globl main)
 # ==============================================================================
 
-.macro print_str(%str_label)
-    li $v0, 4
-    la $a0, %str_label
-    syscall
-.end_macro
-
-.rdata
-    welcome: .asciiz "=== Penghitung Luas Lingkaran ===\\n"
-    prompt:  .asciiz "Masukkan jari-jari (Float): "
-    result:  .asciiz "Luas Lingkaran = "
-    msg_io:  .asciiz "\\nMenyimpan ke file 'hasil.txt' (Cek LocalStorage)...\\n"
-    fname:   .asciiz "hasil.txt"
-    filemsg: .asciiz "Operasi MIPS Berhasil!"
-
 .data
-    .equ PI, 3.141592
-    pi_val:  .float PI
+    msg_welcome: .asciiz "=== Deret Fibonacci ===\\n"
+    msg_prompt:  .asciiz "Masukkan batas jumlah deret (N): "
+    msg_space:   .asciiz ", "
+    msg_done:    .asciiz "\\nSelesai!\\n"
 
 .text
 .globl main
 
+# ------------------------------------------------------------------------------
+# FUNGSI: print_separator
+# Sengaja diletakkan di atas 'main' untuk membuktikan Emulator 
+# sekarang cerdas dan akan memulai eksekusi tepat di label 'main'.
+# ------------------------------------------------------------------------------
+print_separator:
+    li $v0, 4
+    la $a0, msg_space
+    syscall
+    jr $ra
+
+# ------------------------------------------------------------------------------
+# ENTRY POINT UTAMA
+# ------------------------------------------------------------------------------
 main:
-    print_str(welcome)
-    print_str(prompt)
-
-    li $v0, 6
+    # Cetak Welcome
+    li $v0, 4
+    la $a0, msg_welcome
     syscall
 
-    mul.s $f2, $f0, $f0
-
-    la $t0, pi_val
-    lwc1 $f1, 0($t0)
-
-    mul.s $f12, $f1, $f2
-
-    print_str(result)
-    li $v0, 2
+    # Cetak Prompt
+    la $a0, msg_prompt
     syscall
 
-    print_str(msg_io)
+    # Baca Input Integer (N) -> $v0
+    li $v0, 5
+    syscall
+    move $s0, $v0      # $s0 = Batas N
+
+    # Inisialisasi Deret (a = 0, b = 1, counter = 0)
+    li $t0, 0          # $t0 = a
+    li $t1, 1          # $t1 = b
+    li $t2, 0          # $t2 = i (counter)
+
+fib_loop:
+    bge $t2, $s0, fib_end   # Jika i >= N, lompat ke fib_end
+
+    # Cetak nilai 'a'
+    li $v0, 1
+    move $a0, $t0
+    syscall
+
+    # Hitung angka Fibonacci selanjutnya (c = a + b)
+    add $t3, $t0, $t1
     
-    li $v0, 13
-    la $a0, fname
-    li $a1, 1       
-    li $a2, 0       
-    syscall
-    move $s0, $v0   
+    # Geser nilai (a = b, b = c)
+    move $t0, $t1
+    move $t1, $t3
 
-    li $v0, 15
-    move $a0, $s0
-    la $a1, filemsg
-    li $a2, 22      
+    # Increment counter
+    addi $t2, $t2, 1
+
+    # Cek apakah ini elemen terakhir (agar tidak print koma di akhir)
+    bge $t2, $s0, fib_loop
+
+    # Panggil fungsi print koma (jal)
+    jal print_separator
+
+    j fib_loop
+
+fib_end:
+    # Cetak Pesan Selesai
+    li $v0, 4
+    la $a0, msg_done
     syscall
 
-    li $v0, 16
-    move $a0, $s0
-    syscall
-
+    # Exit Program
     li $v0, 10
     syscall
 `;
-
-const UI_GPR = [
-  { id: 'pc', name: 'pc' }, { id: 'hi', name: 'hi' }, { id: 'lo', name: 'lo' },
-  { id: '0', name: '$zero ($0)' }, { id: '1', name: '$at ($1)' },
-  { id: '2', name: '$v0 ($2)' }, { id: '3', name: '$v1 ($3)' },
-  { id: '4', name: '$a0 ($4)' }, { id: '5', name: '$a1 ($5)' }, { id: '6', name: '$a2 ($6)' }, { id: '7', name: '$a3 ($7)' },
-  { id: '8', name: '$t0 ($8)' }, { id: '9', name: '$t1 ($9)' }, { id: '10', name: '$t2 ($10)' }, { id: '11', name: '$t3 ($11)' },
-  { id: '12', name: '$t4 ($12)' }, { id: '13', name: '$t5 ($13)' }, { id: '14', name: '$t6 ($14)' }, { id: '15', name: '$t7 ($15)' },
-  { id: '16', name: '$s0 ($16)' }, { id: '17', name: '$s1 ($17)' }, { id: '18', name: '$s2 ($18)' }, { id: '19', name: '$s3 ($19)' },
-  { id: '20', name: '$s4 ($20)' }, { id: '21', name: '$s5 ($21)' }, { id: '22', name: '$s6 ($22)' }, { id: '23', name: '$s7 ($23)' },
-  { id: '24', name: '$t8 ($24)' }, { id: '25', name: '$t9 ($25)' },
-  { id: '26', name: '$k0 ($26)' }, { id: '27', name: '$k1 ($27)' },
-  { id: '28', name: '$gp ($28)' }, { id: '29', name: '$sp ($29)' }, { id: '30', name: '$fp ($30)' }, { id: '31', name: '$ra ($31)' }
-];
-
-const UI_FPR = Array.from({ length: 32 }, (_, i) => ({ id: `f${i}`, name: `$f${i}` }));
 
 export default function MipsEmulatorPage() {
   const [isMounted, setIsMounted] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   
+  // Tabs State
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'registers'>('files');
+  const [mobileTab, setMobileTab] = useState<string>('code');
+  
+  // Emulator State
   const [code, setCode] = useState<string>(DEFAULT_CODE);
   const [isRunning, setIsRunning] = useState(false);
   const [isCompiled, setIsCompiled] = useState(false);
-  const [isTerminalLoaded, setIsTerminalLoaded] = useState(false); 
   
   const [regValues, setRegValues] = useState<Record<string, string>>({});
   const [disassembly, setDisassembly] = useState<any[]>([]);
   const [memoryDump, setMemoryDump] = useState<any[]>([]);
+  const [memoryAddress, setMemoryAddress] = useState<number>(DATA_BASE);
+  const [memorySearchInput, setMemorySearchInput] = useState<string>(DATA_BASE.toString(16).padStart(8, '0'));
   
   const [activePC, setActivePC] = useState<number>(0);
-  const [memorySearchInput, setMemorySearchInput] = useState<string>("00000000");
-  
-  const [viewFontSize, setViewFontSize] = useState<number>(12);
+  const [viewFontSize, setViewFontSize] = useState<number>(13);
   const [editorBreakpoints, setEditorBreakpoints] = useState<Set<number>>(new Set());
   const [addressBreakpoints, setAddressBreakpoints] = useState<Set<number>>(new Set());
-
-  const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermInstance = useRef<any>(null);
-  const isResumingRef = useRef(false);
-  const inputDisposable = useRef<any>(null);
-  
-  const editorRef = useRef<any>(null);
-  const decorationsRef = useRef<string[]>([]);
-  const monacoRef = useRef<any>(null);
 
   const memoryInstance = useRef(new Memory());
   const cpuInstance = useRef(new CPU(memoryInstance.current));
   const assemblerInstance = useRef(new Assembler());
+  const isResumingRef = useRef(false);
+  
+  // BARU: OS Loader Reference untuk melacak posisi fungsi main:
+  const entryPointRef = useRef<number>(TEXT_BASE);
 
-  // SYSTEM MOUNT & RESPONSIVE LISTENER (HYDRATION FIX)
   useEffect(() => {
     setIsMounted(true);
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     handleResize(); 
     window.addEventListener('resize', handleResize);
+    syncUI();
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-
-  useEffect(() => {
-    if (!isMounted) return;
-
-    let fitAddon: any;
-    const initTerminal = async () => {
-      if (!terminalRef.current) return;
-      const { Terminal } = await import('@xterm/xterm');
-      const { FitAddon } = await import('@xterm/addon-fit');
-      await import('@xterm/xterm/css/xterm.css');
-
-      const term = new Terminal({
-        theme: { background: '#09090b', foreground: '#e4e4e7', cursor: '#10b981' },
-        fontFamily: "'Geist Mono', monospace", fontSize: 13, cursorBlink: true,
-      });
-
-      fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.open(terminalRef.current);
-      fitAddon.fit();
-      term.writeln('\x1b[32m[System]\x1b[0m MIPS32 OS Ready.');
-      xtermInstance.current = term;
-      setIsTerminalLoaded(true); 
-
-      cpuInstance.current.onPrint = (text: string) => term.write(text.replace(/\n/g, '\r\n'));
-      cpuInstance.current.onExit = (exitCode: number) => {
-        term.writeln(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m`);
-        setIsRunning(false);
-        syncUI();
-      };
-
-      cpuInstance.current.onInputRequired = (type) => {
-        let inputBuffer = '';
-        term.write(type === 'float' ? '\x1b[36m' : '\x1b[33m'); 
-        inputDisposable.current = term.onData((data: string) => {
-          const code = data.charCodeAt(0);
-          if (code === 13) { 
-            term.write('\x1b[0m\r\n'); 
-            const val = type === 'float' ? (parseFloat(inputBuffer) || 0) : (parseInt(inputBuffer, 10) || 0);
-            inputDisposable.current?.dispose(); 
-            cpuInstance.current.provideInput(val, type);
-            requestAnimationFrame(executeCycle); 
-          } else if (code === 127 || code === 8) { 
-            if (inputBuffer.length > 0) {
-              inputBuffer = inputBuffer.slice(0, -1);
-              term.write('\b \b');
-            }
-          } else if (code >= 32 && code <= 126) { 
-            inputBuffer += data;
-            term.write(data);
-          }
-        });
-      };
-
-      const resizeObserver = new ResizeObserver(() => {
-        try { fitAddon.fit(); } catch (e) {}
-      });
-      resizeObserver.observe(terminalRef.current);
-      return () => resizeObserver.disconnect();
-    };
-
-    initTerminal();
-    syncUI();
-  }, [isMounted]);
-
-  useEffect(() => {
-    if (!editorRef.current || !monacoRef.current) return;
-    const newDecorations = Array.from(editorBreakpoints).map(line => ({
-      range: new monacoRef.current.Range(line, 1, line, 1),
-      options: { isWholeLine: false, glyphMarginClassName: 'breakpoint-glyph' }
-    }));
-    decorationsRef.current = editorRef.current.deltaDecorations(decorationsRef.current, newDecorations);
-  }, [editorBreakpoints]);
-
-  const toggleBreakpoint = (address: number) => {
-    setAddressBreakpoints(prev => {
-      const newBps = new Set(prev);
-      if (newBps.has(address)) newBps.delete(address);
-      else newBps.add(address);
-      return newBps;
-    });
-  };
-
-  const handleEditorDidMount = (editor: any, monaco: any) => {
-    editorRef.current = editor;
-    monacoRef.current = monaco;
-    editor.onMouseDown((e: any) => {
-      if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
-        const lineNo = e.target.position.lineNumber;
-        setEditorBreakpoints(prev => {
-          const nw = new Set(prev);
-          if (nw.has(lineNo)) nw.delete(lineNo); else nw.add(lineNo);
-          return nw;
-        });
-      }
-    });
-  };
 
   const syncUI = () => {
     const cpu = cpuInstance.current;
@@ -259,30 +158,21 @@ export default function MipsEmulatorPage() {
       'lo': (cpu.lo >>> 0).toString(16).padStart(8, '0')
     };
     
-    for (let i = 0; i < 32; i++) {
-      newRegs[i.toString()] = (cpu.registers[i] >>> 0).toString(16).padStart(8, '0');
-    }
-    for (let i = 0; i < 32; i++) {
-      newRegs[`f${i}`] = cpu.fRegisters[i].toFixed(4); 
-    }
+    for (let i = 0; i < 32; i++) newRegs[i.toString()] = (cpu.registers[i] >>> 0).toString(16).padStart(8, '0');
+    for (let i = 0; i < 32; i++) newRegs[`f${i}`] = cpu.fRegisters[i].toFixed(4); 
     setRegValues(newRegs);
   };
 
-  const generateMemoryDump = (startAddressHex: string) => {
+  const generateMemoryDump = (startAddr: number) => {
     const mem = memoryInstance.current;
     const dump = [];
-    let startAddr = parseInt(startAddressHex, 16);
-    if (isNaN(startAddr)) startAddr = DATA_BASE; 
-
     for (let i = 0; i < 16; i++) {
       const addr = startAddr + (i * 16);
       const words = [];
       let ascii = '';
-
       for (let w = 0; w < 4; w++) {
         let wordVal = 0;
         try { wordVal = mem.read32(addr + (w * 4)); } catch (e) { wordVal = 0; }
-
         words.push(wordVal.toString(16).padStart(8, '0'));
         for (let b = 0; b < 4; b++) {
           const byte = (wordVal >>> (24 - b * 8)) & 0xFF;
@@ -295,14 +185,38 @@ export default function MipsEmulatorPage() {
     setMemoryDump(dump);
   };
 
+  const handlePageMemory = (offset: number) => {
+    const newAddr = Math.max(0, Math.min(0xFFFFFF00, memoryAddress + offset));
+    setMemoryAddress(newAddr);
+    setMemorySearchInput(newAddr.toString(16).padStart(8, '0'));
+    generateMemoryDump(newAddr);
+  };
+
+  const handleSearchMemory = () => {
+    const parsedAddr = parseInt(memorySearchInput, 16);
+    if (!isNaN(parsedAddr)) {
+      const alignedAddr = parsedAddr - (parsedAddr % 16); 
+      setMemoryAddress(alignedAddr);
+      setMemorySearchInput(alignedAddr.toString(16).padStart(8, '0'));
+      generateMemoryDump(alignedAddr);
+    }
+  };
+
+  const toggleBreakpoint = (address: number) => {
+    setAddressBreakpoints(prev => {
+      const newBps = new Set(prev);
+      if (newBps.has(address)) newBps.delete(address); else newBps.add(address);
+      return newBps;
+    });
+  };
+
   const handleBuild = () => {
-    if (!xtermInstance.current) return false;
-    if (inputDisposable.current) inputDisposable.current.dispose();
     setIsRunning(false);
-    
-    xtermInstance.current.writeln('\x1b[36m$ compiling...\x1b[0m');
     memoryInstance.current.reset();
     cpuInstance.current.reset();
+    
+    // Memberi tahu pengguna bahwa proses build dimulai
+    cpuInstance.current.onPrint('\x1b[90m[System] Initiating Build Process...\x1b[0m\r\n');
 
     try {
       const compiled = assemblerInstance.current.compile(code);
@@ -329,11 +243,22 @@ export default function MipsEmulatorPage() {
           memoryInstance.current.load8(data.address + i, data.data[i]);
         }
       }
+
+      // BARU: OS LOADER - Temukan alamat 'main' dan atur sebagai Entry Point
+      const entryAddress = compiled.symbols['main'] !== undefined ? compiled.symbols['main'] : TEXT_BASE;
+      entryPointRef.current = entryAddress;
       
-      generateMemoryDump(memorySearchInput);
+      cpuInstance.current.reset(); // Reset CPU standar (PC jadi 0x00400000)
+      cpuInstance.current.pc = entryAddress; // OS Loader meng-override PC ke alamat 'main'
+
+      generateMemoryDump(memoryAddress);
       syncUI();
       setIsCompiled(true);
-      xtermInstance.current.writeln('\x1b[32m[Success]\x1b[0m Binary compiled successfully.');
+      
+      // Status Berhasil di Terminal
+      cpuInstance.current.onPrint(`\x1b[32;1m[Build Success]\x1b[0m Binary compiled successfully.\r\n`);
+      cpuInstance.current.onPrint(`\x1b[36m$ OS Loader:\x1b[0m Entry point set to \x1b[33mmain\x1b[0m at 0x${entryAddress.toString(16).padStart(8, '0')}\r\n`);
+      
       return true;
 
     } catch (err: any) {
@@ -344,8 +269,9 @@ export default function MipsEmulatorPage() {
       memoryInstance.current.reset(); 
       cpuInstance.current.reset();
       syncUI();
-
-      xtermInstance.current.writeln(`\x1b[31;1m[Assembler Error] ${err.message}\x1b[0m`);
+      
+      // Status Gagal di Terminal
+      cpuInstance.current.onPrint(`\x1b[31;1m[Build Failed]\x1b[0m ${err.message}\r\n`);
       return false;
     }
   };
@@ -355,27 +281,22 @@ export default function MipsEmulatorPage() {
       let status: CPUStatus = 'RUNNING';
       for (let i = 0; i < 500; i++) {
         const currPc = cpuInstance.current.pc;
-        
         if (addressBreakpoints.has(currPc) && !isResumingRef.current) {
           setIsRunning(false);
           syncUI();
-          xtermInstance.current.writeln(`\x1b[93m[Paused] Breakpoint hit at 0x${currPc.toString(16).padStart(8,'0')}\x1b[0m`);
+          cpuInstance.current.onPrint(`\r\n\x1b[93m[Paused] Breakpoint hit at 0x${currPc.toString(16).padStart(8,'0')}\x1b[0m\r\n`);
           return;
         }
         isResumingRef.current = false;
-
         status = cpuInstance.current.step();
         if (status !== 'RUNNING') break;
       }
 
       if (status === 'RUNNING') requestAnimationFrame(executeCycle);
-      else if (status === 'HALTED') {
-         setIsRunning(false);
-         syncUI(); 
-      }
+      else if (status === 'HALTED') { setIsRunning(false); syncUI(); }
     } catch (err: any) {
       setIsRunning(false);
-      xtermInstance.current.writeln(`\r\n\x1b[31;1m[CPU Exception] ${err.message}\x1b[0m`);
+      cpuInstance.current.onPrint(`\r\n\x1b[31;1m[CPU Exception] ${err.message}\x1b[0m\r\n`);
       syncUI();
     }
   };
@@ -386,7 +307,7 @@ export default function MipsEmulatorPage() {
       const isSuccess = handleBuild();
       if (!isSuccess) return; 
     }
-
+    if (isMobile) setMobileTab('terminal');
     setIsRunning(true);
     isResumingRef.current = true; 
     requestAnimationFrame(executeCycle);
@@ -395,314 +316,197 @@ export default function MipsEmulatorPage() {
   const handlePause = () => {
     setIsRunning(false);
     syncUI();
-    xtermInstance.current.writeln('\x1b[93m[Paused] Execution halted by user.\x1b[0m');
+    cpuInstance.current.onPrint('\r\n\x1b[93m[Paused] Execution halted by user.\x1b[0m\r\n');
   };
 
   const handleStep = () => {
-    if (!isCompiled) {
-      const isSuccess = handleBuild();
-      if (!isSuccess) return;
-    }
+    if (!isCompiled) { const isSuccess = handleBuild(); if (!isSuccess) return; }
     try {
       isResumingRef.current = true; 
       cpuInstance.current.step();
       syncUI();
-    } catch (err: any) {
-      xtermInstance.current?.writeln(`\x1b[31;1m[Exception] ${err.message}\x1b[0m`);
+    } catch (err: any) { 
+      cpuInstance.current.onPrint(`\r\n\x1b[31;1m[Exception] ${err.message}\x1b[0m\r\n`);
     }
   };
 
   const handleResetCPU = () => {
     cpuInstance.current.reset();
+    
+    // BARU: Kembalikan PC ke Entry Point 'main', bukan ke TEXT_BASE bawaan!
+    cpuInstance.current.pc = entryPointRef.current; 
+    
     isResumingRef.current = false;
     setIsRunning(false);
     syncUI();
-    xtermInstance.current?.writeln('\x1b[36m$ CPU registers and PC have been reset.\x1b[0m');
-  };
-
-  const handleResetMemory = () => {
-    memoryInstance.current.resetDataOnly();
-    generateMemoryDump(memorySearchInput);
-    xtermInstance.current?.writeln('\x1b[36m$ Data and Stack memory cleared.\x1b[0m');
+    cpuInstance.current.onPrint(`\r\n\x1b[36m$ CPU Reset.\x1b[0m PC restored to 0x${entryPointRef.current.toString(16).padStart(8, '0')}\r\n`);
   };
 
   const handleResetAll = () => {
-    setIsCompiled(false);
-    setIsRunning(false);
-    if (inputDisposable.current) inputDisposable.current.dispose();
-    memoryInstance.current.reset();
-    cpuInstance.current.reset();
-    setDisassembly([]);
-    setMemoryDump([]);
-    syncUI();
-    xtermInstance.current?.clear();
-    
+    setIsCompiled(false); setIsRunning(false);
+    memoryInstance.current.reset(); cpuInstance.current.reset();
+    entryPointRef.current = TEXT_BASE;
+    setDisassembly([]); setMemoryDump([]); syncUI();
     let deletedFiles = 0;
     Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('mips_fs_')) {
-        localStorage.removeItem(key);
-        deletedFiles++;
-      }
+      if (key.startsWith('mips_fs_')) { localStorage.removeItem(key); deletedFiles++; }
     });
-
-    xtermInstance.current?.writeln('\x1b[32m[System]\x1b[0m MIPS32 OS Ready (Total Reset).');
-    if (deletedFiles > 0) {
-      xtermInstance.current?.writeln(`\x1b[36m$ Cleaned up ${deletedFiles} virtual file(s) from LocalStorage.\x1b[0m`);
-    }
+    cpuInstance.current.onPrint('\r\n\x1b[32m[System]\x1b[0m MIPS32 OS Ready (Total Reset).\r\n');
+    if (deletedFiles > 0) cpuInstance.current.onPrint(`\x1b[36m$ Cleaned up ${deletedFiles} virtual file(s).\x1b[0m\r\n`);
   };
 
-  // Tampilan Loading Aman saat Server-Side Rendering
-  if (!isMounted) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-zinc-950">
-         <span className="text-zinc-500 font-mono animate-pulse">Inisialisasi Sistem MIPS...</span>
-      </div>
-    );
-  }
+  if (!isMounted) return <div className="flex h-screen w-screen items-center justify-center bg-[#09090b]"><span className="text-zinc-600 font-mono text-sm animate-pulse">Initializing IDE...</span></div>;
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-300 font-sans w-full overflow-hidden">
+    <div className="flex h-screen flex-col bg-[#09090b] text-zinc-300 font-sans w-full overflow-hidden">
       <style>{`
         .breakpoint-glyph { background-color: #ef4444; border-radius: 50%; width: 10px !important; height: 10px !important; margin-left: 5px; margin-top: 5px; cursor: pointer; box-shadow: 0 0 8px rgba(239,68,68,0.5); }
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
-      {/* HEADER: RESPONSIVE SWIPEABLE */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-950 z-10 shrink-0 gap-3">
-        <div className="flex items-center justify-between w-full md:w-auto">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-zinc-900 border border-zinc-800">
-              <Cpu className="w-5 h-5 text-emerald-500" />
-            </div>
-            <div>
-              <h1 className="text-sm font-semibold text-zinc-100 tracking-tight">MIPS Web Emulator</h1>
-              <p className="text-[10px] text-zinc-500 font-mono">v1.1.0-responsive</p>
+      {/* TOP HEADER */}
+      <header className="flex items-center justify-between h-12 px-3 border-b border-zinc-900 bg-[#0d0d0d] shrink-0">
+        <div className="flex items-center gap-3">
+          <Sheet>
+            <SheetTrigger className="md:hidden flex items-center justify-center w-8 h-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors">
+              <Menu className="w-5 h-5"/>
+            </SheetTrigger>
+            <SheetContent side="left" className="p-0 bg-[#09090b] border-r-zinc-800 w-[280px]">
+               <Sidebar activeTab={activeSidebarTab} setActiveTab={setActiveSidebarTab} regValues={regValues} />
+            </SheetContent>
+          </Sheet>
+
+          <div className="flex items-center justify-center w-7 h-7 rounded bg-zinc-900 border border-zinc-800 hidden md:flex">
+            <Cpu className="w-4 h-4 text-emerald-500" />
+          </div>
+          <div className="flex items-center gap-2 font-mono text-xs">
+            <span className="text-zinc-100 font-semibold hidden md:inline">MIPS Web IDE</span>
+            <span className="text-zinc-600 hidden md:inline">/</span>
+            <div className="flex items-center gap-1.5 bg-zinc-900/80 px-2 py-1 rounded border border-zinc-800 text-emerald-400">
+               <FileCode2 className="w-3.5 h-3.5" /> main.s
             </div>
           </div>
         </div>
 
-        {/* Action Buttons Container - Bisa di-swipe di HP */}
-        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar w-full md:w-auto pb-1 md:pb-0 snap-x">
-          <div className="flex items-center bg-zinc-900/50 p-1 rounded-lg border border-zinc-800/80 shrink-0 snap-start">
-            <span className="text-[10px] uppercase text-zinc-600 font-bold px-2 hidden md:inline-block">System:</span>
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetCPU} title="Reset PC & Registers">Reset CPU</Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetMemory} title="Clear Data & RAM">Clear RAM</Button>
-            <div className="w-px h-4 bg-zinc-700 mx-1"></div>
-            <Button variant="ghost" size="sm" className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-400/10" onClick={handleResetAll} title="Hard Reset System & Disk">
-               <AlertTriangle className="w-3.5 h-3.5 md:mr-1" /> <span className="hidden md:inline">Hard Reset</span>
-            </Button>
-          </div>
+        <div className="hidden md:flex items-center gap-2">
+           <div className="flex items-center gap-1 border-r border-zinc-800 pr-3 mr-1">
+             <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetCPU} title="Reset CPU"><RotateCcw className="w-3.5 h-3.5 mr-1"/> CPU</Button>
+             <Button variant="ghost" size="sm" className="h-7 text-xs text-red-400 hover:bg-red-500/10" onClick={handleResetAll} title="Hard Reset"><AlertTriangle className="w-3.5 h-3.5 mr-1"/> Reset</Button>
+           </div>
+           <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-300 hover:bg-zinc-800" onClick={handleBuild} disabled={isRunning}><Hammer className="w-3.5 h-3.5 mr-1" /> Build</Button>
+           <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-300 hover:bg-zinc-800" onClick={handleStep} disabled={isRunning}><StepForward className="w-3.5 h-3.5 mr-1" /> Step</Button>
+           {isRunning ? (
+             <Button size="sm" className="h-7 text-xs bg-yellow-600/20 text-yellow-500 hover:bg-yellow-600/30" onClick={handlePause}><Pause className="w-3.5 h-3.5 fill-current mr-1" /> Pause</Button>
+           ) : (
+             <Button size="sm" className="h-7 text-xs bg-emerald-600 hover:bg-emerald-500 text-white shadow" onClick={handleRun}><Play className="w-3.5 h-3.5 fill-current mr-1" /> Run</Button>
+           )}
+        </div>
 
-          <div className="flex items-center gap-1 bg-zinc-900/80 p-1 rounded-lg border border-zinc-800/80 shrink-0 snap-start">
-            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5 text-zinc-300 hover:text-white" onClick={handleBuild} disabled={isRunning}>
-              <Hammer className="w-3.5 h-3.5" /> Build
-            </Button>
-            <div className="w-px h-4 bg-zinc-700 mx-1"></div>
-            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5 text-zinc-300 hover:text-white" onClick={handleStep} disabled={isRunning}>
-              <StepForward className="w-3.5 h-3.5" /> Step
-            </Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5 text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10" onClick={handlePause} disabled={!isRunning}>
-              <Pause className="w-3.5 h-3.5 fill-current" /> Pause
-            </Button>
-            <Button size="sm" className="h-7 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white ml-1 shadow-sm" onClick={handleRun} disabled={isRunning}>
-              <Play className="w-3.5 h-3.5 fill-current" /> Run
-            </Button>
-          </div>
+        <div className="md:hidden flex items-center">
+           {isRunning ? (
+             <Button size="sm" className="h-8 w-8 p-0 bg-yellow-600/20 text-yellow-500" onClick={handlePause}><Pause className="w-4 h-4 fill-current" /></Button>
+           ) : (
+             <Button size="sm" className="h-8 w-8 p-0 bg-emerald-600 text-white" onClick={handleRun}><Play className="w-4 h-4 fill-current" /></Button>
+           )}
         </div>
       </header>
 
-      {/* MAIN WORKSPACE - Responsive Direction */}
-      <div className="flex-1 w-full overflow-hidden relative">
-        {/* @ts-ignore */}
-        <ResizablePanelGroup direction={isMobile ? "vertical" : "horizontal"} className="h-full w-full">
-          
-          {/* PANEL 1: REGISTERS */}
-          <ResizablePanel defaultSize={isMobile ? 25 : 20} minSize={15} className="bg-zinc-950/80">
-            <div className="h-full flex flex-col relative w-full">
-              <div className="px-3 py-2 border-b border-zinc-800 flex items-center gap-2 bg-zinc-900/50 shrink-0">
-                <Settings2 className="w-4 h-4 text-zinc-400" />
-                <span className="text-xs font-semibold uppercase tracking-wider">Registers</span>
-              </div>
-              <ScrollArea className="flex-1 p-2 space-y-0.5">
-                <div className="sticky top-0 bg-zinc-950/90 backdrop-blur z-10 py-1 border-b border-zinc-800/50 mb-1">
-                   <span className="text-[10px] font-bold text-zinc-500 px-2 uppercase tracking-widest">Integer (GPR)</span>
+      {/* MAIN WORKSPACE */}
+      <div className="flex-1 w-full overflow-hidden flex flex-col relative">
+        {!isMobile ? (
+          /* DESKTOP LAYOUT */
+          <div className="w-full h-full flex min-h-0">
+            {/* @ts-ignore */}
+            <ResizablePanelGroup direction="horizontal" className="h-full w-full">
+              <ResizablePanel defaultSize={20} minSize={15} className="bg-[#09090b] border-r border-zinc-900 z-10">
+                <Sidebar activeTab={activeSidebarTab} setActiveTab={setActiveSidebarTab} regValues={regValues} />
+              </ResizablePanel>
+              <ResizableHandle withHandle className="w-1 bg-zinc-900 hover:bg-emerald-500/50 transition-colors" />
+              <ResizablePanel defaultSize={80} minSize={40} className="flex flex-col bg-[#0d0d0d] min-h-0">
+                 {/* @ts-ignore */}
+                 <ResizablePanelGroup direction="vertical">
+                   <ResizablePanel defaultSize={70} minSize={30} className="flex flex-col bg-[#0d0d0d] min-h-0">
+                      <Tabs defaultValue="code" className="flex-1 flex flex-col h-full min-h-0">
+                        <div className="bg-[#09090b] border-b border-zinc-900 px-2 pt-1 flex items-end shrink-0">
+                          <TabsList className="bg-transparent border-none p-0 h-8 flex gap-1">
+                            <TabsTrigger value="code" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800 data-[state=active]:border-zinc-800 data-[state=active]:border-b-[#0d0d0d] data-[state=active]:bg-[#0d0d0d] data-[state=active]:text-emerald-500 text-xs px-4 transition-all"><Code2 className="w-3.5 h-3.5 mr-2" /> Code</TabsTrigger>
+                            <TabsTrigger value="disassembly" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800 data-[state=active]:border-zinc-800 data-[state=active]:border-b-[#0d0d0d] data-[state=active]:bg-[#0d0d0d] data-[state=active]:text-emerald-500 text-xs px-4 transition-all"><FileCode2 className="w-3.5 h-3.5 mr-2" /> Disassembly</TabsTrigger>
+                            <TabsTrigger value="memory" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800 data-[state=active]:border-zinc-800 data-[state=active]:border-b-[#0d0d0d] data-[state=active]:bg-[#0d0d0d] data-[state=active]:text-emerald-500 text-xs px-4 transition-all"><Database className="w-3.5 h-3.5 mr-2" /> Memory</TabsTrigger>
+                          </TabsList>
+                        </div>
+                        
+                        <TabsContent value="code" className="flex-1 m-0 p-0 border-none outline-none relative bg-[#0d0d0d] data-[state=active]:flex flex-col min-h-0">
+                          <EditorView code={code} setCode={setCode} setIsCompiled={setIsCompiled} editorBreakpoints={editorBreakpoints} setEditorBreakpoints={setEditorBreakpoints} isMobile={isMobile} />
+                        </TabsContent>
+                        <TabsContent value="disassembly" className="flex-1 m-0 bg-[#0d0d0d] overflow-hidden outline-none data-[state=active]:flex flex-col min-h-0">
+                           <DisassemblyView disassembly={disassembly} activePC={activePC} addressBreakpoints={addressBreakpoints} toggleBreakpoint={toggleBreakpoint} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
+                        </TabsContent>
+                        <TabsContent value="memory" className="flex-1 m-0 bg-[#0d0d0d] overflow-hidden outline-none data-[state=active]:flex flex-col min-h-0">
+                           <MemoryView memoryDump={memoryDump} memorySearchInput={memorySearchInput} setMemorySearchInput={setMemorySearchInput} handleSearchMemory={handleSearchMemory} handlePageMemory={handlePageMemory} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
+                        </TabsContent>
+                      </Tabs>
+                   </ResizablePanel>
+                   <ResizableHandle withHandle className="w-1 bg-zinc-900 hover:bg-emerald-500/50 transition-colors" />
+                   <ResizablePanel defaultSize={30} minSize={15} className="bg-[#0a0a0a] min-h-0 flex flex-col">
+                      <TerminalView cpu={cpuInstance.current} activeTab="terminal" isMobile={isMobile} syncUI={syncUI} setIsRunning={setIsRunning} requestCycle={() => requestAnimationFrame(executeCycle)} />
+                   </ResizablePanel>
+                 </ResizablePanelGroup>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </div>
+        ) : (
+          /* MOBILE LAYOUT */
+          <div className="flex flex-col w-full h-full bg-[#0d0d0d] min-h-0">
+             <Tabs value={mobileTab} onValueChange={setMobileTab} className="flex-1 flex flex-col h-full min-h-0 w-full">
+                <div className="bg-[#09090b] border-b border-zinc-900 px-2 pt-2 flex items-end shrink-0 overflow-x-auto hide-scrollbar">
+                  <TabsList className="bg-transparent border-none p-0 h-9 flex gap-1 shrink-0">
+                    <TabsTrigger value="code" className="h-full flex items-center rounded-t border border-transparent bg-zinc-900 text-zinc-400 data-[state=active]:border-zinc-800 data-[state=active]:border-b-[#0d0d0d] data-[state=active]:bg-[#0d0d0d] data-[state=active]:text-emerald-500 text-xs px-4">Code</TabsTrigger>
+                    <TabsTrigger value="disassembly" className="h-full flex items-center rounded-t border border-transparent bg-zinc-900 text-zinc-400 data-[state=active]:border-zinc-800 data-[state=active]:border-b-[#0d0d0d] data-[state=active]:bg-[#0d0d0d] data-[state=active]:text-emerald-500 text-xs px-4">Disassembly</TabsTrigger>
+                    <TabsTrigger value="memory" className="h-full flex items-center rounded-t border border-transparent bg-zinc-900 text-zinc-400 data-[state=active]:border-zinc-800 data-[state=active]:border-b-[#0d0d0d] data-[state=active]:bg-[#0d0d0d] data-[state=active]:text-emerald-500 text-xs px-4">Memory</TabsTrigger>
+                    <TabsTrigger value="terminal" className="h-full flex items-center rounded-t border border-transparent bg-zinc-900 text-zinc-400 data-[state=active]:border-zinc-800 data-[state=active]:border-b-[#0d0d0d] data-[state=active]:bg-[#0d0d0d] data-[state=active]:text-emerald-500 text-xs px-4">Terminal</TabsTrigger>
+                  </TabsList>
                 </div>
-                {UI_GPR.map((reg) => (
-                  <div key={reg.id} className="flex justify-between items-center py-1.5 px-2 hover:bg-zinc-800/80 group rounded transition-colors cursor-default">
-                    <span className="font-mono text-[11px] text-zinc-400 group-hover:text-zinc-200">{reg.name}</span>
-                    <span className="font-mono text-[11px] text-emerald-400/80 group-hover:text-emerald-400">
-                      {regValues[reg.id] || '00000000'}
-                    </span>
-                  </div>
-                ))}
 
-                <div className="sticky top-0 bg-zinc-950/90 backdrop-blur z-10 py-1 border-b border-zinc-800/50 mt-4 mb-1">
-                   <span className="text-[10px] font-bold text-zinc-500 px-2 uppercase tracking-widest">Float (FPU)</span>
-                </div>
-                {UI_FPR.map((reg) => (
-                  <div key={reg.id} className="flex justify-between items-center py-1.5 px-2 hover:bg-zinc-800/80 group rounded transition-colors cursor-default">
-                    <span className="font-mono text-[11px] text-zinc-400 group-hover:text-zinc-200">{reg.name}</span>
-                    <span className="font-mono text-[11px] text-cyan-400/80 group-hover:text-cyan-400">
-                      {regValues[reg.id] || '0.0000'}
-                    </span>
-                  </div>
-                ))}
-              </ScrollArea>
-            </div>
-          </ResizablePanel>
+                <TabsContent value="code" className="flex-1 m-0 p-0 border-none outline-none bg-[#0d0d0d] data-[state=active]:flex flex-col min-h-0 w-full">
+                  <EditorView code={code} setCode={setCode} setIsCompiled={setIsCompiled} editorBreakpoints={editorBreakpoints} setEditorBreakpoints={setEditorBreakpoints} isMobile={isMobile} />
+                </TabsContent>
 
-          <ResizableHandle withHandle className="w-1 bg-zinc-800 hover:bg-emerald-500/50 active:bg-emerald-500 transition-colors" />
+                <TabsContent value="disassembly" className="flex-1 m-0 bg-[#0d0d0d] overflow-hidden outline-none data-[state=active]:flex flex-col min-h-0 w-full border-none">
+                  <DisassemblyView disassembly={disassembly} activePC={activePC} addressBreakpoints={addressBreakpoints} toggleBreakpoint={toggleBreakpoint} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
+                </TabsContent>
 
-          {/* PANEL 2: EDITOR & DISASSEMBLY */}
-          <ResizablePanel defaultSize={50} minSize={30} className="bg-zinc-950 flex flex-col min-w-0 min-h-0">
-            <Tabs defaultValue="code" className="flex-1 flex flex-col h-full min-h-0 min-w-0">
-              <div className="bg-zinc-900 border-b border-zinc-800 px-2 pt-1.5 flex items-end shrink-0 overflow-x-auto hide-scrollbar">
-                <TabsList className="bg-transparent border-none p-0 h-8 flex gap-1.5 shrink-0">
-                  <TabsTrigger value="code" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white data-[state=active]:border-zinc-700 data-[state=active]:border-b-zinc-950 data-[state=active]:bg-zinc-950 data-[state=active]:text-emerald-400 text-xs px-4 transition-colors">
-                    <Code2 className="w-3.5 h-3.5 mr-2" /> Code
-                  </TabsTrigger>
-                  <TabsTrigger value="disassembly" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white data-[state=active]:border-zinc-700 data-[state=active]:border-b-zinc-950 data-[state=active]:bg-zinc-950 data-[state=active]:text-emerald-400 text-xs px-4 transition-colors">
-                    <FileCode2 className="w-3.5 h-3.5 mr-2" /> Disassembly
-                  </TabsTrigger>
-                  <TabsTrigger value="memory" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white data-[state=active]:border-zinc-700 data-[state=active]:border-b-zinc-950 data-[state=active]:bg-zinc-950 data-[state=active]:text-emerald-400 text-xs px-4 transition-colors">
-                    <Database className="w-3.5 h-3.5 mr-2" /> Memory
-                  </TabsTrigger>
-                </TabsList>
-              </div>
-              
-              <TabsContent value="code" className="flex-1 m-0 h-full p-0 border-none outline-none relative min-h-0 min-w-0">
-                <div className="absolute inset-0 w-full h-full">
-                  <MonacoEditor 
-                    height="100%" 
-                    language="mips" 
-                    theme="vs-dark" 
-                    value={code} 
-                    onChange={(val) => {
-                      setCode(val || "");
-                      setIsCompiled(false); 
-                    }} 
-                    onMount={handleEditorDidMount} 
-                    options={{ minimap: { enabled: false }, fontSize: 14, fontFamily: "'Geist Mono', monospace", padding: { top: 16 }, glyphMargin: true, wordWrap: "on" }} 
-                  />
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="disassembly" className="flex-1 m-0 flex flex-col bg-zinc-950 overflow-hidden outline-none data-[state=active]:flex min-h-0 min-w-0">
-                <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/40 shrink-0">
-                  <span className="text-xs text-zinc-400">Click a line to set a Breakpoint.</span>
-                  <div className="flex items-center gap-1">
-                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.max(10, viewFontSize - 1))}><ZoomOut className="w-3.5 h-3.5"/></Button>
-                     <span className="text-[10px] text-zinc-500 font-mono w-6 text-center">{viewFontSize}px</span>
-                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.min(24, viewFontSize + 1))}><ZoomIn className="w-3.5 h-3.5"/></Button>
-                  </div>
-                </div>
-                <div className="flex-1 overflow-auto relative min-h-0">
-                  <table className="w-full text-left border-collapse">
-                    <thead className="sticky top-0 bg-zinc-900/95 backdrop-blur z-10 border-b border-zinc-800">
-                      <tr>
-                        <th className="px-3 py-1.5 text-xs font-semibold text-zinc-300 w-32">Address</th>
-                        <th className="px-3 py-1.5 text-xs font-semibold text-zinc-300 w-28 border-l border-zinc-800">Opcode</th>
-                        <th className="px-3 py-1.5 text-xs font-semibold text-zinc-300 border-l border-zinc-800">Disassembly</th>
-                      </tr>
-                    </thead>
-                    <tbody className="font-mono" style={{ fontSize: `${viewFontSize}px` }}>
-                      {disassembly.length === 0 ? (
-                         <tr><td colSpan={3} className="p-4 text-center text-zinc-600 italic text-xs">Compile code to view disassembly</td></tr>
-                      ) : (
-                        disassembly.map((row, idx) => {
-                          const isActive = row.address === activePC;
-                          const isBp = addressBreakpoints.has(row.address);
-                          return (
-                            <tr key={idx} onClick={() => toggleBreakpoint(row.address)} className={`${isActive ? 'bg-yellow-500/20 text-yellow-300' : 'hover:bg-zinc-800/30 text-zinc-400'} border-b border-zinc-900/50 cursor-pointer`}>
-                              <td className="px-3 py-1.5 flex items-center">
-                                <div className={`w-2 h-2 rounded-full mr-2 flex-shrink-0 ${isBp ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.8)]' : 'bg-transparent'}`}></div>
-                                {row.addressHex}
-                              </td>
-                              <td className="px-3 py-1.5 text-zinc-500 border-l border-zinc-900/50">{row.opcode}</td>
-                              <td className="px-3 py-1.5 border-l border-zinc-900/50 whitespace-pre">{row.instruction}</td>
-                            </tr>
-                          );
-                        })
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </TabsContent>
+                <TabsContent value="memory" className="flex-1 m-0 bg-[#0d0d0d] overflow-hidden outline-none data-[state=active]:flex flex-col min-h-0 w-full border-none">
+                  <MemoryView memoryDump={memoryDump} memorySearchInput={memorySearchInput} setMemorySearchInput={setMemorySearchInput} handleSearchMemory={handleSearchMemory} handlePageMemory={handlePageMemory} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
+                </TabsContent>
 
-              <TabsContent value="memory" className="flex-1 m-0 flex flex-col bg-zinc-950 overflow-hidden outline-none data-[state=active]:flex min-h-0 min-w-0">
-                <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/40 shrink-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-zinc-400 hidden sm:inline">Go to Hex address: 0x</span>
-                    <span className="text-xs text-zinc-400 sm:hidden">0x</span>
-                    <input type="text" value={memorySearchInput} onChange={(e) => setMemorySearchInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && generateMemoryDump(memorySearchInput)} className="h-7 w-20 sm:w-24 bg-zinc-950 border border-zinc-700 rounded px-2 text-xs font-mono text-zinc-300 outline-none focus:border-emerald-500" placeholder="10010000" />
-                    <Button variant="secondary" size="sm" className="h-7 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300" onClick={() => generateMemoryDump(memorySearchInput)}>Refresh</Button>
-                  </div>
-                  <div className="flex items-center gap-1">
-                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.max(10, viewFontSize - 1))}><ZoomOut className="w-3.5 h-3.5"/></Button>
-                     <span className="text-[10px] text-zinc-500 font-mono w-6 text-center">{viewFontSize}px</span>
-                     <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.min(24, viewFontSize + 1))}><ZoomIn className="w-3.5 h-3.5"/></Button>
-                  </div>
-                </div>
-                <div className="flex-1 overflow-auto relative min-h-0">
-                  <table className="w-full text-left border-collapse">
-                    <thead className="sticky top-0 bg-zinc-900/95 backdrop-blur z-10 border-b border-zinc-800">
-                      <tr>
-                        <th className="px-3 py-1.5 text-xs font-semibold text-zinc-300 w-28">Address</th>
-                        <th className="px-3 py-1.5 text-xs font-semibold text-zinc-300 border-l border-zinc-800">Memory contents and ASCII</th>
-                      </tr>
-                    </thead>
-                    <tbody className="font-mono" style={{ fontSize: `${viewFontSize}px` }}>
-                      {memoryDump.length === 0 ? (
-                         <tr><td colSpan={2} className="p-4 text-center text-zinc-600 italic text-xs">Compile code to view memory</td></tr>
-                      ) : (
-                        memoryDump.map((row, idx) => (
-                          <tr key={idx} className="border-b border-zinc-900/50 hover:bg-zinc-800/30">
-                            <td className="px-3 py-1.5 font-semibold text-zinc-400">{row.address}</td>
-                            <td className="px-3 py-1.5 border-l border-zinc-900/50 flex gap-4 items-center overflow-x-auto hide-scrollbar">
-                              <span className="text-zinc-300 tracking-widest whitespace-nowrap">
-                                {row.words.map((w: string, i: number) => <span key={i} className={w === '00000000' ? 'text-zinc-600' : 'text-zinc-200'}>{w}{i < 3 ? '  ' : ''}</span>)}
-                              </span>
-                              <span className="font-bold tracking-widest whitespace-nowrap">
-                                {row.ascii.split('').map((char: string, i: number) => <span key={i} className={char === '.' ? 'text-red-500/80' : 'text-zinc-300'}>{char}</span>)}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </TabsContent>
-            </Tabs>
-          </ResizablePanel>
+                <TabsContent value="terminal" className="flex-1 m-0 bg-[#0a0a0a] relative min-h-0 w-full border-none outline-none data-[state=active]:flex flex-col">
+                  <TerminalView cpu={cpuInstance.current} activeTab={mobileTab} isMobile={isMobile} syncUI={syncUI} setIsRunning={setIsRunning} requestCycle={() => requestAnimationFrame(executeCycle)} />
+                </TabsContent>
+             </Tabs>
 
-          <ResizableHandle withHandle className="w-1 bg-zinc-800 hover:bg-emerald-500/50 active:bg-emerald-500 transition-colors" />
-
-          {/* PANEL 3: TERMINAL */}
-          <ResizablePanel defaultSize={isMobile ? 25 : 30} minSize={15} className="bg-[#09090b]">
-            <div className="h-full flex flex-col relative w-full min-h-0 min-w-0">
-              {!isTerminalLoaded && (
-                <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/80 z-20">
-                  <span className="text-xs text-zinc-500 font-mono animate-pulse">Menghubungkan Terminal...</span>
-                </div>
-              )}
-              <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/50 shrink-0">
-                <div className="flex items-center gap-2 text-zinc-400">
-                  <TerminalSquare className="w-4 h-4" />
-                  <span className="text-xs uppercase font-semibold tracking-wider">Terminal</span>
-                </div>
-                <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-sm" onClick={() => xtermInstance.current?.clear()}>
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-              <div className="flex-1 p-2 relative min-h-0 min-w-0 w-full overflow-hidden">
-                 <div className="absolute inset-2" ref={terminalRef}></div>
-              </div>
-            </div>
-          </ResizablePanel>
-          
-        </ResizablePanelGroup>
+             {/* Bottom Mobile Action Bar */}
+             <div className="h-12 bg-[#09090b] border-t border-zinc-900 flex items-center justify-around px-2 shrink-0 pb-1">
+               <Button variant="ghost" className="flex-1 flex flex-col gap-1 h-full rounded-none text-zinc-500 hover:text-emerald-400" onClick={handleBuild}>
+                 <Hammer className="w-4 h-4" /> <span className="text-[9px] uppercase tracking-wider font-bold">Build</span>
+               </Button>
+               <Button variant="ghost" className="flex-1 flex flex-col gap-1 h-full rounded-none text-zinc-500 hover:text-emerald-400" onClick={handleStep}>
+                 <StepForward className="w-4 h-4" /> <span className="text-[9px] uppercase tracking-wider font-bold">Step</span>
+               </Button>
+               <Button variant="ghost" className="flex-1 flex flex-col gap-1 h-full rounded-none text-zinc-500 hover:text-red-400" onClick={handleResetAll}>
+                 <RotateCcw className="w-4 h-4" /> <span className="text-[9px] uppercase tracking-wider font-bold">Reset</span>
+               </Button>
+               <Sheet>
+                 <SheetTrigger className="flex-1 flex flex-col items-center justify-center gap-1 h-full text-zinc-500 hover:text-emerald-400 hover:bg-zinc-900 transition-colors">
+                   <Settings2 className="w-4 h-4" /> <span className="text-[9px] uppercase tracking-wider font-bold">Reg/File</span>
+                 </SheetTrigger>
+                 <SheetContent side="bottom" className="p-0 bg-[#09090b] border-t-zinc-800 h-[60vh]">
+                    <Sidebar activeTab={activeSidebarTab} setActiveTab={setActiveSidebarTab} regValues={regValues} />
+                 </SheetContent>
+               </Sheet>
+             </div>
+          </div>
+        )}
       </div>
     </div>
   );
