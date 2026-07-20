@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import dynamic from 'next/dynamic'; // BARU: Untuk Lazy Loading
+import dynamic from 'next/dynamic';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,13 +17,12 @@ import { Memory, TEXT_BASE, DATA_BASE } from '@/core/memory';
 import { CPU, CPUStatus } from '@/core/cpu';
 import { Assembler } from '@/core/assembler';
 
-// BARU: Memuat Monaco Editor secara dinamis (Lazy Load) dengan Skeleton Placeholder
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), {
   ssr: false,
   loading: () => (
     <div className="w-full h-full flex flex-col items-center justify-center bg-[#1e1e1e]">
       <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3"></div>
-      <span className="text-xs text-zinc-500 font-mono">Loading Monaco Editor...</span>
+      <span className="text-xs text-zinc-500 font-mono animate-pulse">Load Editor...</span>
     </div>
   )
 });
@@ -58,13 +57,11 @@ main:
     print_str(welcome)
     print_str(prompt)
 
-    # Membaca input Float (masuk ke $f0)
     li $v0, 6
     syscall
 
     mul.s $f2, $f0, $f0
 
-    # Load konstanta PI
     la $t0, pi_val
     lwc1 $f1, 0($t0)
 
@@ -76,7 +73,6 @@ main:
 
     print_str(msg_io)
     
-    # Syscall 13: Open File
     li $v0, 13
     la $a0, fname
     li $a1, 1       
@@ -84,14 +80,12 @@ main:
     syscall
     move $s0, $v0   
 
-    # Syscall 15: Write File
     li $v0, 15
     move $a0, $s0
     la $a1, filemsg
     li $a2, 22      
     syscall
 
-    # Syscall 16: Close File
     li $v0, 16
     move $a0, $s0
     syscall
@@ -117,10 +111,13 @@ const UI_GPR = [
 const UI_FPR = Array.from({ length: 32 }, (_, i) => ({ id: `f${i}`, name: `$f${i}` }));
 
 export default function MipsEmulatorPage() {
+  const [isMounted, setIsMounted] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  
   const [code, setCode] = useState<string>(DEFAULT_CODE);
   const [isRunning, setIsRunning] = useState(false);
   const [isCompiled, setIsCompiled] = useState(false);
-  const [isTerminalLoaded, setIsTerminalLoaded] = useState(false); // BARU: State UI Terminal
+  const [isTerminalLoaded, setIsTerminalLoaded] = useState(false); 
   
   const [regValues, setRegValues] = useState<Record<string, string>>({});
   const [disassembly, setDisassembly] = useState<any[]>([]);
@@ -146,7 +143,18 @@ export default function MipsEmulatorPage() {
   const cpuInstance = useRef(new CPU(memoryInstance.current));
   const assemblerInstance = useRef(new Assembler());
 
+  // SYSTEM MOUNT & RESPONSIVE LISTENER (HYDRATION FIX)
   useEffect(() => {
+    setIsMounted(true);
+    const handleResize = () => setIsMobile(window.innerWidth < 768);
+    handleResize(); 
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isMounted) return;
+
     let fitAddon: any;
     const initTerminal = async () => {
       if (!terminalRef.current) return;
@@ -165,7 +173,7 @@ export default function MipsEmulatorPage() {
       fitAddon.fit();
       term.writeln('\x1b[32m[System]\x1b[0m MIPS32 OS Ready.');
       xtermInstance.current = term;
-      setIsTerminalLoaded(true); // Terminal selesai dimuat, hapus skeleton
+      setIsTerminalLoaded(true); 
 
       cpuInstance.current.onPrint = (text: string) => term.write(text.replace(/\n/g, '\r\n'));
       cpuInstance.current.onExit = (exitCode: number) => {
@@ -197,14 +205,16 @@ export default function MipsEmulatorPage() {
         });
       };
 
-      const resizeObserver = new ResizeObserver(() => fitAddon.fit());
+      const resizeObserver = new ResizeObserver(() => {
+        try { fitAddon.fit(); } catch (e) {}
+      });
       resizeObserver.observe(terminalRef.current);
       return () => resizeObserver.disconnect();
     };
 
     initTerminal();
     syncUI();
-  }, []);
+  }, [isMounted]);
 
   useEffect(() => {
     if (!editorRef.current || !monacoRef.current) return;
@@ -441,35 +451,50 @@ export default function MipsEmulatorPage() {
     }
   };
 
+  // Tampilan Loading Aman saat Server-Side Rendering
+  if (!isMounted) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-zinc-950">
+         <span className="text-zinc-500 font-mono animate-pulse">Inisialisasi Sistem MIPS...</span>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-300 font-sans min-w-[960px] overflow-x-auto overflow-y-hidden">
+    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-300 font-sans w-full overflow-hidden">
       <style>{`
         .breakpoint-glyph { background-color: #ef4444; border-radius: 50%; width: 10px !important; height: 10px !important; margin-left: 5px; margin-top: 5px; cursor: pointer; box-shadow: 0 0 8px rgba(239,68,68,0.5); }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
 
-      <header className="flex items-center justify-between px-4 py-2 border-b border-zinc-800 bg-zinc-950 z-10 shadow-sm shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="flex items-center justify-center w-8 h-8 rounded-md bg-zinc-900 border border-zinc-800">
-            <Cpu className="w-5 h-5 text-emerald-500" />
-          </div>
-          <div>
-            <h1 className="text-sm font-semibold text-zinc-100">MIPS Web Emulator</h1>
-            <p className="text-[10px] text-zinc-500 font-mono">v1.0.0-release</p>
+      {/* HEADER: RESPONSIVE SWIPEABLE */}
+      <header className="flex flex-col md:flex-row md:items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-950 z-10 shrink-0 gap-3">
+        <div className="flex items-center justify-between w-full md:w-auto">
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-zinc-900 border border-zinc-800">
+              <Cpu className="w-5 h-5 text-emerald-500" />
+            </div>
+            <div>
+              <h1 className="text-sm font-semibold text-zinc-100 tracking-tight">MIPS Web Emulator</h1>
+              <p className="text-[10px] text-zinc-500 font-mono">v1.1.0-responsive</p>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex items-center bg-zinc-900/50 p-1 rounded-lg border border-zinc-800/80">
-            <span className="text-[10px] uppercase text-zinc-600 font-bold px-2">System:</span>
+        {/* Action Buttons Container - Bisa di-swipe di HP */}
+        <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar w-full md:w-auto pb-1 md:pb-0 snap-x">
+          <div className="flex items-center bg-zinc-900/50 p-1 rounded-lg border border-zinc-800/80 shrink-0 snap-start">
+            <span className="text-[10px] uppercase text-zinc-600 font-bold px-2 hidden md:inline-block">System:</span>
             <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetCPU} title="Reset PC & Registers">Reset CPU</Button>
             <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetMemory} title="Clear Data & RAM">Clear RAM</Button>
             <div className="w-px h-4 bg-zinc-700 mx-1"></div>
             <Button variant="ghost" size="sm" className="h-7 text-xs text-red-400 hover:text-red-300 hover:bg-red-400/10" onClick={handleResetAll} title="Hard Reset System & Disk">
-               <AlertTriangle className="w-3.5 h-3.5 mr-1" /> Hard Reset
+               <AlertTriangle className="w-3.5 h-3.5 md:mr-1" /> <span className="hidden md:inline">Hard Reset</span>
             </Button>
           </div>
 
-          <div className="flex items-center gap-1 bg-zinc-900/80 p-1 rounded-lg border border-zinc-800/80">
+          <div className="flex items-center gap-1 bg-zinc-900/80 p-1 rounded-lg border border-zinc-800/80 shrink-0 snap-start">
             <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5 text-zinc-300 hover:text-white" onClick={handleBuild} disabled={isRunning}>
               <Hammer className="w-3.5 h-3.5" /> Build
             </Button>
@@ -480,20 +505,22 @@ export default function MipsEmulatorPage() {
             <Button variant="ghost" size="sm" className="h-7 text-xs gap-1.5 text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10" onClick={handlePause} disabled={!isRunning}>
               <Pause className="w-3.5 h-3.5 fill-current" /> Pause
             </Button>
-            <Button size="sm" className="h-7 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white ml-1" onClick={handleRun} disabled={isRunning}>
+            <Button size="sm" className="h-7 text-xs gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white ml-1 shadow-sm" onClick={handleRun} disabled={isRunning}>
               <Play className="w-3.5 h-3.5 fill-current" /> Run
             </Button>
           </div>
         </div>
       </header>
 
-      <div className="flex-1 overflow-hidden">
-        {/* @ts-ignore: Mengabaikan strict typing error bawaan library untuk properti direction */}
-        <ResizablePanelGroup direction="horizontal">
+      {/* MAIN WORKSPACE - Responsive Direction */}
+      <div className="flex-1 w-full overflow-hidden relative">
+        {/* @ts-ignore */}
+        <ResizablePanelGroup direction={isMobile ? "vertical" : "horizontal"} className="h-full w-full">
           
-          <ResizablePanel defaultSize={20} minSize={15} className="bg-zinc-950/80">
-            <div className="h-full flex flex-col">
-              <div className="px-3 py-2 border-b border-zinc-800 flex items-center gap-2 bg-zinc-900/50">
+          {/* PANEL 1: REGISTERS */}
+          <ResizablePanel defaultSize={isMobile ? 25 : 20} minSize={15} className="bg-zinc-950/80">
+            <div className="h-full flex flex-col relative w-full">
+              <div className="px-3 py-2 border-b border-zinc-800 flex items-center gap-2 bg-zinc-900/50 shrink-0">
                 <Settings2 className="w-4 h-4 text-zinc-400" />
                 <span className="text-xs font-semibold uppercase tracking-wider">Registers</span>
               </div>
@@ -525,12 +552,13 @@ export default function MipsEmulatorPage() {
             </div>
           </ResizablePanel>
 
-          <ResizableHandle withHandle className="w-1 bg-zinc-800 hover:bg-emerald-500/50" />
+          <ResizableHandle withHandle className="w-1 bg-zinc-800 hover:bg-emerald-500/50 active:bg-emerald-500 transition-colors" />
 
-          <ResizablePanel defaultSize={50} minSize={30} className="bg-zinc-950 flex flex-col min-w-0">
-            <Tabs defaultValue="code" className="flex-1 flex flex-col h-full">
-              <div className="bg-zinc-900 border-b border-zinc-800 px-2 pt-1.5 flex items-end">
-                <TabsList className="bg-transparent border-none p-0 h-8 flex gap-1.5">
+          {/* PANEL 2: EDITOR & DISASSEMBLY */}
+          <ResizablePanel defaultSize={50} minSize={30} className="bg-zinc-950 flex flex-col min-w-0 min-h-0">
+            <Tabs defaultValue="code" className="flex-1 flex flex-col h-full min-h-0 min-w-0">
+              <div className="bg-zinc-900 border-b border-zinc-800 px-2 pt-1.5 flex items-end shrink-0 overflow-x-auto hide-scrollbar">
+                <TabsList className="bg-transparent border-none p-0 h-8 flex gap-1.5 shrink-0">
                   <TabsTrigger value="code" className="h-full flex items-center rounded-t-md rounded-b-none border border-transparent bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white data-[state=active]:border-zinc-700 data-[state=active]:border-b-zinc-950 data-[state=active]:bg-zinc-950 data-[state=active]:text-emerald-400 text-xs px-4 transition-colors">
                     <Code2 className="w-3.5 h-3.5 mr-2" /> Code
                   </TabsTrigger>
@@ -543,22 +571,24 @@ export default function MipsEmulatorPage() {
                 </TabsList>
               </div>
               
-              <TabsContent value="code" className="flex-1 m-0 h-full p-0 border-none outline-none relative">
-                <MonacoEditor 
-                  height="100%" 
-                  language="mips" 
-                  theme="vs-dark" 
-                  value={code} 
-                  onChange={(val) => {
-                    setCode(val || "");
-                    setIsCompiled(false); 
-                  }} 
-                  onMount={handleEditorDidMount} 
-                  options={{ minimap: { enabled: false }, fontSize: 14, fontFamily: "'Geist Mono', monospace", padding: { top: 16 }, glyphMargin: true }} 
-                />
+              <TabsContent value="code" className="flex-1 m-0 h-full p-0 border-none outline-none relative min-h-0 min-w-0">
+                <div className="absolute inset-0 w-full h-full">
+                  <MonacoEditor 
+                    height="100%" 
+                    language="mips" 
+                    theme="vs-dark" 
+                    value={code} 
+                    onChange={(val) => {
+                      setCode(val || "");
+                      setIsCompiled(false); 
+                    }} 
+                    onMount={handleEditorDidMount} 
+                    options={{ minimap: { enabled: false }, fontSize: 14, fontFamily: "'Geist Mono', monospace", padding: { top: 16 }, glyphMargin: true, wordWrap: "on" }} 
+                  />
+                </div>
               </TabsContent>
               
-              <TabsContent value="disassembly" className="flex-1 m-0 flex flex-col bg-zinc-950 overflow-hidden outline-none data-[state=active]:flex">
+              <TabsContent value="disassembly" className="flex-1 m-0 flex flex-col bg-zinc-950 overflow-hidden outline-none data-[state=active]:flex min-h-0 min-w-0">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/40 shrink-0">
                   <span className="text-xs text-zinc-400">Click a line to set a Breakpoint.</span>
                   <div className="flex items-center gap-1">
@@ -567,7 +597,7 @@ export default function MipsEmulatorPage() {
                      <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.min(24, viewFontSize + 1))}><ZoomIn className="w-3.5 h-3.5"/></Button>
                   </div>
                 </div>
-                <div className="flex-1 overflow-auto relative">
+                <div className="flex-1 overflow-auto relative min-h-0">
                   <table className="w-full text-left border-collapse">
                     <thead className="sticky top-0 bg-zinc-900/95 backdrop-blur z-10 border-b border-zinc-800">
                       <tr>
@@ -600,11 +630,12 @@ export default function MipsEmulatorPage() {
                 </div>
               </TabsContent>
 
-              <TabsContent value="memory" className="flex-1 m-0 flex flex-col bg-zinc-950 overflow-hidden outline-none data-[state=active]:flex">
+              <TabsContent value="memory" className="flex-1 m-0 flex flex-col bg-zinc-950 overflow-hidden outline-none data-[state=active]:flex min-h-0 min-w-0">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/40 shrink-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-zinc-400">Go to Hex address: 0x</span>
-                    <input type="text" value={memorySearchInput} onChange={(e) => setMemorySearchInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && generateMemoryDump(memorySearchInput)} className="h-7 w-24 bg-zinc-950 border border-zinc-700 rounded px-2 text-xs font-mono text-zinc-300 outline-none focus:border-emerald-500" placeholder="10010000" />
+                    <span className="text-xs text-zinc-400 hidden sm:inline">Go to Hex address: 0x</span>
+                    <span className="text-xs text-zinc-400 sm:hidden">0x</span>
+                    <input type="text" value={memorySearchInput} onChange={(e) => setMemorySearchInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && generateMemoryDump(memorySearchInput)} className="h-7 w-20 sm:w-24 bg-zinc-950 border border-zinc-700 rounded px-2 text-xs font-mono text-zinc-300 outline-none focus:border-emerald-500" placeholder="10010000" />
                     <Button variant="secondary" size="sm" className="h-7 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300" onClick={() => generateMemoryDump(memorySearchInput)}>Refresh</Button>
                   </div>
                   <div className="flex items-center gap-1">
@@ -613,7 +644,7 @@ export default function MipsEmulatorPage() {
                      <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-400 hover:text-white" onClick={() => setViewFontSize(Math.min(24, viewFontSize + 1))}><ZoomIn className="w-3.5 h-3.5"/></Button>
                   </div>
                 </div>
-                <div className="flex-1 overflow-auto relative">
+                <div className="flex-1 overflow-auto relative min-h-0">
                   <table className="w-full text-left border-collapse">
                     <thead className="sticky top-0 bg-zinc-900/95 backdrop-blur z-10 border-b border-zinc-800">
                       <tr>
@@ -628,11 +659,11 @@ export default function MipsEmulatorPage() {
                         memoryDump.map((row, idx) => (
                           <tr key={idx} className="border-b border-zinc-900/50 hover:bg-zinc-800/30">
                             <td className="px-3 py-1.5 font-semibold text-zinc-400">{row.address}</td>
-                            <td className="px-3 py-1.5 border-l border-zinc-900/50 flex gap-4 items-center">
-                              <span className="text-zinc-300 tracking-widest min-w-[280px]">
+                            <td className="px-3 py-1.5 border-l border-zinc-900/50 flex gap-4 items-center overflow-x-auto hide-scrollbar">
+                              <span className="text-zinc-300 tracking-widest whitespace-nowrap">
                                 {row.words.map((w: string, i: number) => <span key={i} className={w === '00000000' ? 'text-zinc-600' : 'text-zinc-200'}>{w}{i < 3 ? '  ' : ''}</span>)}
                               </span>
-                              <span className="font-bold tracking-widest">
+                              <span className="font-bold tracking-widest whitespace-nowrap">
                                 {row.ascii.split('').map((char: string, i: number) => <span key={i} className={char === '.' ? 'text-red-500/80' : 'text-zinc-300'}>{char}</span>)}
                               </span>
                             </td>
@@ -646,26 +677,28 @@ export default function MipsEmulatorPage() {
             </Tabs>
           </ResizablePanel>
 
-          <ResizableHandle withHandle className="w-1 bg-zinc-800 hover:bg-emerald-500/50" />
+          <ResizableHandle withHandle className="w-1 bg-zinc-800 hover:bg-emerald-500/50 active:bg-emerald-500 transition-colors" />
 
-          <ResizablePanel defaultSize={30} minSize={20} className="bg-[#09090b]">
-            <div className="h-full flex flex-col relative">
-              {/* BARU: Skeleton Loader untuk Terminal */}
+          {/* PANEL 3: TERMINAL */}
+          <ResizablePanel defaultSize={isMobile ? 25 : 30} minSize={15} className="bg-[#09090b]">
+            <div className="h-full flex flex-col relative w-full min-h-0 min-w-0">
               {!isTerminalLoaded && (
                 <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/80 z-20">
-                  <span className="text-xs text-zinc-500 font-mono animate-pulse">Initializing Terminal...</span>
+                  <span className="text-xs text-zinc-500 font-mono animate-pulse">Menghubungkan Terminal...</span>
                 </div>
               )}
-              <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/50">
+              <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/50 shrink-0">
                 <div className="flex items-center gap-2 text-zinc-400">
                   <TerminalSquare className="w-4 h-4" />
                   <span className="text-xs uppercase font-semibold tracking-wider">Terminal</span>
                 </div>
-                <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-zinc-200 hover:bg-zinc-800 rounded-sm" onClick={() => xtermInstance.current?.clear()}>
+                <Button variant="ghost" size="icon" className="h-6 w-6 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-sm" onClick={() => xtermInstance.current?.clear()}>
                   <RotateCcw className="w-3.5 h-3.5" />
                 </Button>
               </div>
-              <div className="flex-1 p-2 relative" ref={terminalRef}></div>
+              <div className="flex-1 p-2 relative min-h-0 min-w-0 w-full overflow-hidden">
+                 <div className="absolute inset-2" ref={terminalRef}></div>
+              </div>
             </div>
           </ResizablePanel>
           
