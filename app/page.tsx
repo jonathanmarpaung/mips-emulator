@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
-import Editor from '@monaco-editor/react';
+import dynamic from 'next/dynamic'; // BARU: Untuk Lazy Loading
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -17,6 +17,17 @@ import { Memory, TEXT_BASE, DATA_BASE } from '@/core/memory';
 import { CPU, CPUStatus } from '@/core/cpu';
 import { Assembler } from '@/core/assembler';
 
+// BARU: Memuat Monaco Editor secara dinamis (Lazy Load) dengan Skeleton Placeholder
+const MonacoEditor = dynamic(() => import('@monaco-editor/react'), {
+  ssr: false,
+  loading: () => (
+    <div className="w-full h-full flex flex-col items-center justify-center bg-[#1e1e1e]">
+      <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+      <span className="text-xs text-zinc-500 font-mono">Loading Monaco Editor...</span>
+    </div>
+  )
+});
+
 const DEFAULT_CODE = `# ==============================================================================
 # MIPS WEB EMULATOR - FEATURE SHOWCASE
 # Menampilkan: .rdata (Protected), .equ (Konstanta), FPU Float, dan File I/O
@@ -29,7 +40,6 @@ const DEFAULT_CODE = `# ========================================================
 .end_macro
 
 .rdata
-    # 1. READ-ONLY DATA (Aman dari overwrite CPU)
     welcome: .asciiz "=== Penghitung Luas Lingkaran ===\\n"
     prompt:  .asciiz "Masukkan jari-jari (Float): "
     result:  .asciiz "Luas Lingkaran = "
@@ -38,7 +48,6 @@ const DEFAULT_CODE = `# ========================================================
     filemsg: .asciiz "Operasi MIPS Berhasil!"
 
 .data
-    # 2. VARIABEL & KONSTANTA (.equ)
     .equ PI, 3.141592
     pi_val:  .float PI
 
@@ -49,49 +58,44 @@ main:
     print_str(welcome)
     print_str(prompt)
 
-    # 3. FPU: Syscall 6 (Read Float, masuk ke $f0)
+    # Membaca input Float (masuk ke $f0)
     li $v0, 6
     syscall
 
-    # FPU: Hitung r * r -> $f2
     mul.s $f2, $f0, $f0
 
-    # FPU: Load PI ke $f1 menggunakan lwc1
+    # Load konstanta PI
     la $t0, pi_val
     lwc1 $f1, 0($t0)
 
-    # FPU: PI * (r * r) -> $f12 (Argumen standar Syscall 2)
     mul.s $f12, $f1, $f2
 
-    # Cetak Hasil Float (Syscall 2)
     print_str(result)
     li $v0, 2
     syscall
 
-    # 4. SIMULASI FILE I/O (Tersimpan murni di LocalStorage)
     print_str(msg_io)
     
-    # Open File (Syscall 13)
+    # Syscall 13: Open File
     li $v0, 13
     la $a0, fname
-    li $a1, 1       # Flag Write
-    li $a2, 0       # Mode
+    li $a1, 1       
+    li $a2, 0       
     syscall
-    move $s0, $v0   # Simpan File Descriptor (FD) di $s0
+    move $s0, $v0   
 
-    # Write File (Syscall 15)
+    # Syscall 15: Write File
     li $v0, 15
     move $a0, $s0
     la $a1, filemsg
-    li $a2, 22      # Panjang string
+    li $a2, 22      
     syscall
 
-    # Close File (Syscall 16)
+    # Syscall 16: Close File
     li $v0, 16
     move $a0, $s0
     syscall
 
-    # Exit
     li $v0, 10
     syscall
 `;
@@ -116,6 +120,7 @@ export default function MipsEmulatorPage() {
   const [code, setCode] = useState<string>(DEFAULT_CODE);
   const [isRunning, setIsRunning] = useState(false);
   const [isCompiled, setIsCompiled] = useState(false);
+  const [isTerminalLoaded, setIsTerminalLoaded] = useState(false); // BARU: State UI Terminal
   
   const [regValues, setRegValues] = useState<Record<string, string>>({});
   const [disassembly, setDisassembly] = useState<any[]>([]);
@@ -160,6 +165,7 @@ export default function MipsEmulatorPage() {
       fitAddon.fit();
       term.writeln('\x1b[32m[System]\x1b[0m MIPS32 OS Ready.');
       xtermInstance.current = term;
+      setIsTerminalLoaded(true); // Terminal selesai dimuat, hapus skeleton
 
       cpuInstance.current.onPrint = (text: string) => term.write(text.replace(/\n/g, '\r\n'));
       cpuInstance.current.onExit = (exitCode: number) => {
@@ -209,6 +215,15 @@ export default function MipsEmulatorPage() {
     decorationsRef.current = editorRef.current.deltaDecorations(decorationsRef.current, newDecorations);
   }, [editorBreakpoints]);
 
+  const toggleBreakpoint = (address: number) => {
+    setAddressBreakpoints(prev => {
+      const newBps = new Set(prev);
+      if (newBps.has(address)) newBps.delete(address);
+      else newBps.add(address);
+      return newBps;
+    });
+  };
+
   const handleEditorDidMount = (editor: any, monaco: any) => {
     editorRef.current = editor;
     monacoRef.current = monaco;
@@ -241,18 +256,6 @@ export default function MipsEmulatorPage() {
       newRegs[`f${i}`] = cpu.fRegisters[i].toFixed(4); 
     }
     setRegValues(newRegs);
-  };
-
-  const toggleBreakpoint = (address: number) => {
-    setAddressBreakpoints(prev => {
-      const newBps = new Set(prev);
-      if (newBps.has(address)) {
-        newBps.delete(address);
-      } else {
-        newBps.add(address);
-      }
-      return newBps;
-    });
   };
 
   const generateMemoryDump = (startAddressHex: string) => {
@@ -322,8 +325,17 @@ export default function MipsEmulatorPage() {
       setIsCompiled(true);
       xtermInstance.current.writeln('\x1b[32m[Success]\x1b[0m Binary compiled successfully.');
       return true;
+
     } catch (err: any) {
-      xtermInstance.current.writeln(`\x1b[31m[Assembler Error] ${err.message}\x1b[0m`);
+      setDisassembly([]);
+      setMemoryDump([]);
+      setAddressBreakpoints(new Set());
+      setIsCompiled(false);
+      memoryInstance.current.reset(); 
+      cpuInstance.current.reset();
+      syncUI();
+
+      xtermInstance.current.writeln(`\x1b[31;1m[Assembler Error] ${err.message}\x1b[0m`);
       return false;
     }
   };
@@ -353,14 +365,17 @@ export default function MipsEmulatorPage() {
       }
     } catch (err: any) {
       setIsRunning(false);
-      xtermInstance.current.writeln(`\r\n\x1b[31m[CPU Exception] ${err.message}\x1b[0m`);
+      xtermInstance.current.writeln(`\r\n\x1b[31;1m[CPU Exception] ${err.message}\x1b[0m`);
       syncUI();
     }
   };
 
   const handleRun = () => {
     if (isRunning) return;
-    if (!isCompiled && !handleBuild()) return;
+    if (!isCompiled) {
+      const isSuccess = handleBuild();
+      if (!isSuccess) return; 
+    }
 
     setIsRunning(true);
     isResumingRef.current = true; 
@@ -374,13 +389,16 @@ export default function MipsEmulatorPage() {
   };
 
   const handleStep = () => {
-    if (!isCompiled && !handleBuild()) return;
+    if (!isCompiled) {
+      const isSuccess = handleBuild();
+      if (!isSuccess) return;
+    }
     try {
       isResumingRef.current = true; 
       cpuInstance.current.step();
       syncUI();
     } catch (err: any) {
-      xtermInstance.current?.writeln(`\x1b[31m[Exception] ${err.message}\x1b[0m`);
+      xtermInstance.current?.writeln(`\x1b[31;1m[Exception] ${err.message}\x1b[0m`);
     }
   };
 
@@ -409,7 +427,6 @@ export default function MipsEmulatorPage() {
     syncUI();
     xtermInstance.current?.clear();
     
-    // BARU: Menghapus File LocalStorage MIPS (Reset Hard Disk Virtual)
     let deletedFiles = 0;
     Object.keys(localStorage).forEach(key => {
       if (key.startsWith('mips_fs_')) {
@@ -526,8 +543,19 @@ export default function MipsEmulatorPage() {
                 </TabsList>
               </div>
               
-              <TabsContent value="code" className="flex-1 m-0 h-full p-0 border-none outline-none">
-                <Editor height="100%" language="mips" theme="vs-dark" value={code} onChange={(val) => setCode(val || "")} onMount={handleEditorDidMount} options={{ minimap: { enabled: false }, fontSize: 14, fontFamily: "'Geist Mono', monospace", padding: { top: 16 }, glyphMargin: true }} />
+              <TabsContent value="code" className="flex-1 m-0 h-full p-0 border-none outline-none relative">
+                <MonacoEditor 
+                  height="100%" 
+                  language="mips" 
+                  theme="vs-dark" 
+                  value={code} 
+                  onChange={(val) => {
+                    setCode(val || "");
+                    setIsCompiled(false); 
+                  }} 
+                  onMount={handleEditorDidMount} 
+                  options={{ minimap: { enabled: false }, fontSize: 14, fontFamily: "'Geist Mono', monospace", padding: { top: 16 }, glyphMargin: true }} 
+                />
               </TabsContent>
               
               <TabsContent value="disassembly" className="flex-1 m-0 flex flex-col bg-zinc-950 overflow-hidden outline-none data-[state=active]:flex">
@@ -621,7 +649,13 @@ export default function MipsEmulatorPage() {
           <ResizableHandle withHandle className="w-1 bg-zinc-800 hover:bg-emerald-500/50" />
 
           <ResizablePanel defaultSize={30} minSize={20} className="bg-[#09090b]">
-            <div className="h-full flex flex-col">
+            <div className="h-full flex flex-col relative">
+              {/* BARU: Skeleton Loader untuk Terminal */}
+              {!isTerminalLoaded && (
+                <div className="absolute inset-0 flex items-center justify-center bg-zinc-950/80 z-20">
+                  <span className="text-xs text-zinc-500 font-mono animate-pulse">Initializing Terminal...</span>
+                </div>
+              )}
               <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-800 bg-zinc-900/50">
                 <div className="flex items-center gap-2 text-zinc-400">
                   <TerminalSquare className="w-4 h-4" />

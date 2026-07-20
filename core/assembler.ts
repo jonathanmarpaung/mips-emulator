@@ -185,7 +185,8 @@ export class Assembler {
           const padding = (4 - (dAddr % 4)) % 4;
           advanceData(padding + (line.substring(6).split(',').length * 4));
         } else if (line.startsWith('.space')) {
-          advanceData(parseInt(line.substring(6).trim(), 10));
+          // Hanya hitung padding, parsing error dilempar di Pass 2
+          advanceData(parseInt(line.substring(6).trim(), 10) || 0);
         } else if (line.startsWith('.align')) {
           const n = parseInt(line.substring(6).trim(), 10);
           const bound = Math.pow(2, n);
@@ -204,7 +205,7 @@ export class Assembler {
         const val = new Function('return (' + e + ')')();
         this.symbolTable.set(sym, val);
       } catch (err) {
-        throw new Error(`[Assembler Error] Failed to evaluate .equ expression: ${data.expr}`);
+        throw new Error(`Error: Failed to evaluate .equ expression: ${data.expr}`);
       }
     }
   }
@@ -233,7 +234,7 @@ export class Assembler {
       if (!line || line.startsWith('.set') || line.startsWith('.global') || line.startsWith('.globl')) continue;
 
       if (currentSegment === '.text') {
-        const codes = this.encodeInstruction(line, textAddress);
+        const codes = this.encodeInstruction(line, textAddress, node.lineNo); // Inject Line Number
         for (const code of codes) {
           this.instructions.push({
             address: textAddress,
@@ -266,13 +267,13 @@ export class Assembler {
             dAddr += bytes.length;
           }
         } else if (line.startsWith('.byte')) {
-          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim()));
+          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim(), node.lineNo));
           pushData(new Uint8Array(values), dAddr);
           dAddr += values.length;
         } else if (line.startsWith('.half')) {
           const padding = (2 - (dAddr % 2)) % 2;
           dAddr += padding;
-          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim()));
+          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim(), node.lineNo));
           const bytes = new Uint8Array(values.length * 2);
           const view = new DataView(bytes.buffer);
           for (let i = 0; i < values.length; i++) view.setUint16(i * 2, values[i] >>> 0, false);
@@ -281,7 +282,7 @@ export class Assembler {
         } else if (line.startsWith('.word')) {
           const padding = (4 - (dAddr % 4)) % 4;
           dAddr += padding;
-          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim()));
+          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim(), node.lineNo));
           const bytes = new Uint8Array(values.length * 4);
           const view = new DataView(bytes.buffer);
           for (let i = 0; i < values.length; i++) view.setUint32(i * 4, values[i] >>> 0, false);
@@ -290,10 +291,12 @@ export class Assembler {
         } else if (line.startsWith('.float')) {
           const padding = (4 - (dAddr % 4)) % 4;
           dAddr += padding;
-          // PERBAIKAN: .float sekarang memvalidasi symbol table terlebih dahulu
           const values = line.substring(6).split(',').map(v => {
             const token = v.trim();
-            return this.symbolTable.has(token) ? this.symbolTable.get(token)! : parseFloat(token);
+            if (this.symbolTable.has(token)) return this.symbolTable.get(token)!;
+            const parsed = parseFloat(token);
+            if (isNaN(parsed)) throw new Error(`Code:${node.lineNo}: Error: undefined float reference '${token}'`);
+            return parsed;
           });
           const bytes = new Uint8Array(values.length * 4);
           const view = new DataView(bytes.buffer);
@@ -301,7 +304,7 @@ export class Assembler {
           pushData(bytes, dAddr);
           dAddr += bytes.length;
         } else if (line.startsWith('.space')) {
-          const size = this.parseImm(line.substring(6).trim());
+          const size = this.parseImm(line.substring(6).trim(), node.lineNo);
           pushData(new Uint8Array(size), dAddr);
           dAddr += size;
         } else if (line.startsWith('.align')) {
@@ -316,34 +319,49 @@ export class Assembler {
     }
   }
 
-  private parseImm(val: string): number {
+  // Inject lineNo untuk error yang presisi
+  private parseImm(val: string, lineNo: number): number {
     if (this.symbolTable.has(val)) return this.symbolTable.get(val)!;
-    if (val.toLowerCase().startsWith('0x')) return parseInt(val, 16);
-    return parseInt(val, 10);
+    const parsed = val.toLowerCase().startsWith('0x') ? parseInt(val, 16) : parseInt(val, 10);
+    if (isNaN(parsed)) {
+      throw new Error(`Code:${lineNo}: Error: undefined reference or invalid immediate '${val}'`);
+    }
+    return parsed;
   }
 
-  private encodeInstruction(instruction: string, pc: number): number[] {
+  private encodeInstruction(instruction: string, pc: number, lineNo: number): number[] {
     const parts = instruction.replace(/,/g, ' ').trim().split(/\s+/);
     const opcode = parts[0].toLowerCase();
-    const getReg = (regName: string) => REG_MAP[regName] || 0;
+    
+    const getReg = (regName: string) => {
+      if (!(regName in REG_MAP)) throw new Error(`Code:${lineNo}: Error: invalid register '${regName}'`);
+      return REG_MAP[regName];
+    };
 
     const parseMemArg = (arg: string) => {
       const match = arg.match(/^(-?(?:0x[0-9a-fA-F]+|\d+|[a-zA-Z_0-9]+))\(([a-zA-Z0-9_$]+)\)$/);
-      if (match) return { offset: this.parseImm(match[1]) & 0xFFFF, reg: getReg(match[2]) };
-      return { offset: 0, reg: 0 };
+      if (match) return { offset: this.parseImm(match[1], lineNo) & 0xFFFF, reg: getReg(match[2]) };
+      throw new Error(`Code:${lineNo}: Error: invalid memory operand '${arg}'`);
     };
 
+    // Validasi jumlah argumen minimal agar tidak terjadi bug saat missing operand
+    if (parts.length < 2 && opcode !== 'syscall' && opcode !== 'nop') {
+       throw new Error(`Code:${lineNo}: Error: missing operands for instruction '${opcode}'`);
+    }
+
     switch (opcode) {
-      case 'li': return [(9 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[2]) & 0xFFFF)];
+      case 'li': return [(9 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[2], lineNo) & 0xFFFF)];
       case 'la': 
         const rtLa = getReg(parts[1]);
-        const laAddr = this.symbolTable.get(parts[2]) || 0;
+        if (!this.symbolTable.has(parts[2])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[2]}'`);
+        const laAddr = this.symbolTable.get(parts[2])!;
         return [
           (0x0F << 26) | (0 << 21) | (1 << 16) | ((laAddr >>> 16) & 0xFFFF),
           (0x0D << 26) | (1 << 21) | (rtLa << 16) | (laAddr & 0xFFFF)
         ];
       case 'move':  return [(0 << 26) | (getReg(parts[2]) << 21) | (0 << 16) | (getReg(parts[1]) << 11) | 0x20];
       case 'syscall': return [0x0000000c]; 
+      case 'nop': return [0x00000000];
 
       case 'add':   return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x20];
       case 'addu':  return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x21];
@@ -353,20 +371,20 @@ export class Assembler {
       case 'or':    return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x25];
       case 'mult':  return [(0 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | (0 << 11) | 0x18];
       case 'div':   return [(0 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | (0 << 11) | 0x1A];
-      case 'sll':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((this.parseImm(parts[3]) & 0x1F) << 6) | 0x00];
-      case 'srl':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((this.parseImm(parts[3]) & 0x1F) << 6) | 0x02];
+      case 'sll':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((this.parseImm(parts[3], lineNo) & 0x1F) << 6) | 0x00];
+      case 'srl':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((this.parseImm(parts[3], lineNo) & 0x1F) << 6) | 0x02];
       case 'slt':   return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x2A];
       case 'mflo':  return [(0 << 26) | (0 << 21) | (0 << 16) | (getReg(parts[1]) << 11) | 0x12];
       case 'mfhi':  return [(0 << 26) | (0 << 21) | (0 << 16) | (getReg(parts[1]) << 11) | 0x10];
       case 'mul':   return [(28 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x02];
 
-      case 'addi':  return [(8 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
-      case 'addiu': return [(9 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
-      case 'andi':  return [(12 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
-      case 'ori':   return [(13 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
-      case 'xori':  return [(14 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
-      case 'lui':   return [(15 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[2]) & 0xFFFF)];
-      case 'slti':  return [(10 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3]) & 0xFFFF)];
+      case 'addi':  return [(8 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
+      case 'addiu': return [(9 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
+      case 'andi':  return [(12 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
+      case 'ori':   return [(13 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
+      case 'xori':  return [(14 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
+      case 'lui':   return [(15 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[2], lineNo) & 0xFFFF)];
+      case 'slti':  return [(10 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
 
       case 'sw':    
       case 'lw':    
@@ -379,16 +397,19 @@ export class Assembler {
       }
 
       case 'beq': {
-        const beqOffset = (((this.symbolTable.get(parts[3]) || 0) - (pc + 4)) >> 2) & 0xFFFF;
+        if (!this.symbolTable.has(parts[3])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[3]}'`);
+        const beqOffset = ((this.symbolTable.get(parts[3])! - (pc + 4)) >> 2) & 0xFFFF;
         return [(4 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | beqOffset];
       }
       case 'bne': {
-        const bneOffset = (((this.symbolTable.get(parts[3]) || 0) - (pc + 4)) >> 2) & 0xFFFF;
+        if (!this.symbolTable.has(parts[3])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[3]}'`);
+        const bneOffset = ((this.symbolTable.get(parts[3])! - (pc + 4)) >> 2) & 0xFFFF;
         return [(5 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | bneOffset];
       }
       case 'j':     
       case 'jal': { 
-        const jIndex = ((this.symbolTable.get(parts[1]) || 0) >>> 2) & 0x03FFFFFF;
+        if (!this.symbolTable.has(parts[1])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[1]}'`);
+        const jIndex = (this.symbolTable.get(parts[1])! >>> 2) & 0x03FFFFFF;
         const jOp = opcode === 'j' ? 2 : 3;
         return [(jOp << 26) | jIndex];
       }
@@ -398,8 +419,9 @@ export class Assembler {
       case 'blt':
       case 'bge':
       case 'ble': {
+        if (!this.symbolTable.has(parts[3])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[3]}'`);
         const r1 = getReg(parts[1]); const r2 = getReg(parts[2]);
-        const bTarget = (((this.symbolTable.get(parts[3]) || 0) - (pc + 8)) >> 2) & 0xFFFF;
+        const bTarget = ((this.symbolTable.get(parts[3])! - (pc + 8)) >> 2) & 0xFFFF;
         const rs_slt = (opcode === 'bgt' || opcode === 'ble') ? r2 : r1;
         const rt_slt = (opcode === 'bgt' || opcode === 'ble') ? r1 : r2;
         const branchOp = (opcode === 'bgt' || opcode === 'blt') ? 5 : 4; 
@@ -425,8 +447,8 @@ export class Assembler {
       case 'div.s': return [(17 << 26) | (16 << 21) | (getReg(parts[3]) << 16) | (getReg(parts[2]) << 11) | (getReg(parts[1]) << 6) | 0x03];
 
       default: 
-        console.warn(`[Assembler] Unrecognized instruction: ${instruction}`);
-        return [0x00000000];
+        // LONTARKAN ERROR ala GNU Compiler (misal: Code:45: Error: unrecognized opcode 'subi')
+        throw new Error(`Code:${lineNo}: Error: unrecognized opcode or macro '${opcode}'`);
     }
   }
 
