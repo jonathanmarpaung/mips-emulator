@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { 
   Play, StepForward, RotateCcw, Hammer, Pause, AlertTriangle,
-  Cpu, Code2, Settings2, FileCode2, Database, Menu, TerminalSquare
+  Cpu, Code2, Settings2, FileCode2, Database, Menu, TerminalSquare, LayoutList, FolderCode
 } from "lucide-react";
 
 import { Memory, DATA_BASE, TEXT_BASE } from '@/core/memory';
@@ -18,6 +18,7 @@ import { EditorView } from '@/components/emulator/EditorView';
 import { DisassemblyView } from '@/components/emulator/DisassemblyView';
 import { MemoryView } from '@/components/emulator/MemoryView';
 import { TerminalView } from '@/components/emulator/TerminalView';
+import { RegistersView } from '@/components/emulator/RegistersView';
 
 const DEFAULT_CODE = `# ==============================================================================
 # MIPS WEB EMULATOR
@@ -30,24 +31,15 @@ const DEFAULT_CODE = `# ========================================================
 .text
 .globl main
 
-# ------------------------------------------------------------------------------
-# Fungsi ini sengaja diletakkan di atas 'main'. 
-# Jika OS Loader bekerja, fungsi ini akan dilewati dan CPU langsung ke 'main'.
-# ------------------------------------------------------------------------------
 fungsi_dummy:
     li $v0, 10
     syscall
 
-# ------------------------------------------------------------------------------
-# ENTRY POINT UTAMA
-# ------------------------------------------------------------------------------
 main:
-    # Cetak string
     li $v0, 4
     la $a0, hello
     syscall
 
-    # Keluar dari program
     li $v0, 10
     syscall
 `;
@@ -58,7 +50,6 @@ export default function MipsEmulatorPage() {
   
   // Single Source of Truth untuk Tab Navigation
   const [activeTab, setActiveTab] = useState<string>('code');
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'files' | 'registers'>('files');
   
   const [code, setCode] = useState<string>(DEFAULT_CODE);
   const [isRunning, setIsRunning] = useState(false);
@@ -182,7 +173,6 @@ export default function MipsEmulatorPage() {
         }
       }
 
-      // SISTEM OS LOADER: Cari alamat fungsi 'main'
       const entryAddress = compiled.symbols['main'] !== undefined ? compiled.symbols['main'] : TEXT_BASE;
       entryPointRef.current = entryAddress;
       
@@ -287,8 +277,9 @@ export default function MipsEmulatorPage() {
             <SheetTrigger className="md:hidden flex items-center justify-center w-8 h-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors">
               <Menu className="w-5 h-5"/>
             </SheetTrigger>
-            <SheetContent side="left" className="p-0 bg-[#09090b] border-r-zinc-800 w-[280px] flex flex-col h-full">
-               <Sidebar activeTab={activeSidebarTab} setActiveTab={setActiveSidebarTab} regValues={regValues} />
+            {/* Laci Sidebar HANYA UNTUK FILES sekarang */}
+            <SheetContent side="left" className="p-0 bg-[#09090b] border-r-zinc-800 w-[280px] flex flex-col h-full overflow-hidden [&>button]:text-zinc-400 [&>button]:z-50">
+               <Sidebar />
             </SheetContent>
           </Sheet>
 
@@ -329,67 +320,53 @@ export default function MipsEmulatorPage() {
         </div>
       </header>
 
-      {/* PERBAIKAN: MOBILE TABS HEADER DITARUH GLOBAL (Selalu Terlihat di HP) */}
-      {isMobile && (
-        <div className="flex items-center px-2 pt-2 bg-[#09090b] border-b border-zinc-900 shrink-0 overflow-x-auto hide-scrollbar z-10 shadow-sm">
-          <button 
-            onClick={() => setActiveTab('code')}
-            className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'code' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
-            <Code2 className="w-3.5 h-3.5 mr-2" /> Code
-          </button>
-          <button 
-            onClick={() => setActiveTab('disassembly')}
-            className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'disassembly' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
-            <FileCode2 className="w-3.5 h-3.5 mr-2" /> Disassembly
-          </button>
-          <button 
-            onClick={() => setActiveTab('memory')}
-            className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'memory' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
-            <Database className="w-3.5 h-3.5 mr-2" /> Memory
-          </button>
+      {/* TABS HEADER GLOBAL (Mobile & Desktop disatukan) */}
+      <div className="flex items-center px-2 pt-2 bg-[#09090b] border-b border-zinc-900 shrink-0 overflow-x-auto hide-scrollbar z-10 shadow-sm">
+        <button 
+          onClick={() => setActiveTab('code')}
+          className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'code' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
+          <Code2 className="w-3.5 h-3.5 mr-2" /> Code
+        </button>
+        <button 
+          onClick={() => setActiveTab('disassembly')}
+          className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'disassembly' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
+          <FileCode2 className="w-3.5 h-3.5 mr-2" /> Disassembly
+        </button>
+        <button 
+          onClick={() => setActiveTab('memory')}
+          className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'memory' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
+          <Database className="w-3.5 h-3.5 mr-2" /> Memory
+        </button>
+        {/* TAB REGISTERS SEBELUM TERMINAL */}
+        <button 
+          onClick={() => setActiveTab('registers')}
+          className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'registers' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
+          <LayoutList className="w-3.5 h-3.5 mr-2" /> Registers
+        </button>
+        {/* TAB TERMINAL HANYA MUNCUL DI MOBILE */}
+        {isMobile && (
           <button 
             onClick={() => setActiveTab('terminal')}
             className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'terminal' ? 'bg-[#0a0a0a] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
             <TerminalSquare className="w-3.5 h-3.5 mr-2" /> Terminal
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* MAIN WORKSPACE - NATIVE FLEXBOX */}
+      {/* MAIN WORKSPACE */}
       <div className="flex-1 flex flex-row w-full min-h-0 bg-[#0d0d0d]">
         
-        {/* SIDEBAR PC */}
+        {/* SIDEBAR PC (Hanya Files) */}
         <div className="hidden md:flex w-64 border-r border-zinc-900 bg-[#09090b] flex-col shrink-0">
-          <Sidebar activeTab={activeSidebarTab} setActiveTab={setActiveSidebarTab} regValues={regValues} />
+          <Sidebar />
         </div>
 
         {/* CENTER + RIGHT AREA */}
         <div className="flex-1 flex flex-col md:flex-row min-w-0 h-full">
           
-          {/* CENTER PANEL (Code/Disassembly/Memory) */}
+          {/* CENTER PANEL (Code/Disassembly/Memory/Registers) */}
           <div className={`flex-1 flex-col min-w-0 h-full ${isMobile && activeTab === 'terminal' ? 'hidden' : 'flex'}`}>
             
-            {/* DESKTOP TABS HEADER (Hidden on Mobile) */}
-            {!isMobile && (
-              <div className="flex items-center px-2 pt-2 bg-[#09090b] border-b border-zinc-900 shrink-0 overflow-x-auto hide-scrollbar">
-                <button 
-                  onClick={() => setActiveTab('code')}
-                  className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'code' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
-                  <Code2 className="w-3.5 h-3.5 mr-2" /> Code
-                </button>
-                <button 
-                  onClick={() => setActiveTab('disassembly')}
-                  className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'disassembly' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
-                  <FileCode2 className="w-3.5 h-3.5 mr-2" /> Disassembly
-                </button>
-                <button 
-                  onClick={() => setActiveTab('memory')}
-                  className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'memory' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
-                  <Database className="w-3.5 h-3.5 mr-2" /> Memory
-                </button>
-              </div>
-            )}
-
             {/* TAB CONTENTS */}
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'code' ? 'flex' : 'hidden'}`}>
               <EditorView code={code} setCode={setCode} setIsCompiled={setIsCompiled} editorBreakpoints={editorBreakpoints} setEditorBreakpoints={setEditorBreakpoints} isMobile={isMobile} />
@@ -402,6 +379,12 @@ export default function MipsEmulatorPage() {
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'memory' ? 'flex' : 'hidden'}`}>
               <MemoryView memoryDump={memoryDump} memorySearchInput={memorySearchInput} setMemorySearchInput={setMemorySearchInput} handleSearchMemory={handleSearchMemory} handlePageMemory={handlePageMemory} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
             </div>
+
+            {/* KONTEN TAB REGISTERS */}
+            <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'registers' ? 'flex' : 'hidden'}`}>
+              <RegistersView regValues={regValues} />
+            </div>
+
           </div>
 
           {/* RIGHT PANEL: TERMINAL */}
@@ -426,10 +409,10 @@ export default function MipsEmulatorPage() {
           </Button>
           <Sheet>
             <SheetTrigger className="flex-1 flex flex-col items-center justify-center gap-1 h-12 rounded-lg text-zinc-500 hover:text-emerald-400 hover:bg-zinc-900/50 transition-colors">
-              <Settings2 className="w-4 h-4" /> <span className="text-[10px] font-bold">Reg/File</span>
+              <FolderCode className="w-4 h-4" /> <span className="text-[10px] font-bold">Files</span>
             </SheetTrigger>
-            <SheetContent side="bottom" className="p-0 bg-[#09090b] border-t-zinc-800 h-[70vh] flex flex-col">
-               <Sidebar activeTab={activeSidebarTab} setActiveTab={setActiveSidebarTab} regValues={regValues} />
+            <SheetContent side="left" className="p-0 bg-[#09090b] border-r-zinc-800 w-[280px] flex flex-col h-full overflow-hidden [&>button]:text-zinc-400 [&>button]:z-50">
+               <Sidebar />
             </SheetContent>
           </Sheet>
         </div>
