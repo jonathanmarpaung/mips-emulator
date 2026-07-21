@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { TerminalSquare, RotateCcw } from "lucide-react";
 import { CPU } from '@/core/cpu';
 
-// PERBAIKAN: Import CSS secara statis di sini agar teks tidak terpotong!
 import '@xterm/xterm/css/xterm.css';
 
 interface TerminalViewProps {
@@ -40,10 +39,11 @@ export function TerminalView({ cpu, activeTab, isMobile, syncUI, setIsRunning, r
 
       term = new Terminal({
         theme: { background: '#0a0a0a', foreground: '#e4e4e7', cursor: '#10b981', selectionBackground: '#27272a' },
-        fontFamily: "'Geist Mono', monospace", 
+        // KUNCI 1: Gunakan Font Bawaan Sistem agar Xterm tidak salah menghitung tinggi font
+        fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Courier New', monospace", 
         fontSize: 13, 
-        cursorBlink: true,
-        rows: 24 
+        lineHeight: 1.2, // KUNCI 2: Berikan ruang aman vertikal agar huruf tidak terpotong
+        cursorBlink: true
       });
 
       fitAddon = new FitAddon();
@@ -93,9 +93,11 @@ export function TerminalView({ cpu, activeTab, isMobile, syncUI, setIsRunning, r
     initTerm();
 
     const ro = new ResizeObserver(() => {
-      if (el.clientWidth > 0 && el.clientHeight > 0) {
-        try { fitAddon?.fit(); } catch(e){}
-      }
+      setTimeout(() => {
+         if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+            try { fitAddon?.fit(); } catch(e){}
+         }
+      }, 50);
     });
     ro.observe(el);
 
@@ -107,6 +109,7 @@ export function TerminalView({ cpu, activeTab, isMobile, syncUI, setIsRunning, r
     };
   }, []); 
 
+  // KUNCI 3: Peringatan Jeda Ekstra saat tab dibuka di HP
   useEffect(() => {
     if (isMobile && activeTab === 'terminal') {
       setTimeout(() => {
@@ -114,7 +117,7 @@ export function TerminalView({ cpu, activeTab, isMobile, syncUI, setIsRunning, r
         if (el && el.clientWidth > 0 && el.clientHeight > 0) {
            try { fitAddonInstance.current?.fit(); } catch(e){}
         }
-      }, 100); 
+      }, 150); // Waktu yang cukup untuk browser menyelesaikan lukisan layout flexbox
     }
   }, [activeTab, isMobile]);
 
@@ -138,8 +141,9 @@ export function TerminalView({ cpu, activeTab, isMobile, syncUI, setIsRunning, r
           <RotateCcw className="w-3.5 h-3.5" />
         </Button>
       </div>
-      <div className="flex-1 p-2 relative min-h-0 min-w-0 w-full overflow-hidden">
-         <div className="absolute inset-2" ref={terminalRef}></div>
+      {/* KUNCI 4: Wadah mutlak diubah menjadi statis 'w-full h-full' agar ukurannya solid */}
+      <div className="flex-1 w-full relative min-h-0 overflow-hidden p-2">
+         <div className="w-full h-full" ref={terminalRef}></div>
       </div>
     </div>
   );
