@@ -27,15 +27,15 @@ const UI_FPR = Array.from({ length: 32 }, (_, i) => ({ id: `f${i}`, name: `$f${i
 export function Sidebar({ activeTab, setActiveTab, regValues }: SidebarProps) {
   return (
     <div className="flex flex-col h-full w-full bg-[#09090b] text-zinc-300 overflow-hidden">
-      <div className="flex items-center gap-4 px-4 py-3 border-b border-zinc-900 shrink-0">
+      <div className="flex items-center gap-4 px-4 py-3 border-b border-zinc-900 shrink-0 shadow-sm z-10">
         <button onClick={() => setActiveTab('files')} className={`text-xs font-semibold uppercase tracking-wider transition-colors ${activeTab === 'files' ? 'text-emerald-500' : 'text-zinc-500 hover:text-zinc-300'}`}>Project</button>
         <button onClick={() => setActiveTab('registers')} className={`text-xs font-semibold uppercase tracking-wider transition-colors ${activeTab === 'registers' ? 'text-emerald-500' : 'text-zinc-500 hover:text-zinc-300'}`}>Registers</button>
       </div>
       
-      {/* PENTING: overflow-y-auto dan flex-1 agar bisa di scroll baik di PC maupun HP */}
-      <div className="flex-1 overflow-y-auto w-full pb-8">
+      {/* PERBAIKAN TOTAL: Menggunakan Native CSS Scroll agar dijamin tidak stuck di HP */}
+      <div className="flex-1 overflow-y-auto overscroll-contain w-full min-h-0">
         {activeTab === 'files' ? (
-          <div className="p-2 space-y-1">
+          <div className="p-2 space-y-1 pb-24">
             <div className="flex items-center gap-2 px-2 py-1.5 text-zinc-400 text-xs font-semibold uppercase tracking-wider mb-2">
               <FolderCode className="w-4 h-4"/> Workspace
             </div>
@@ -51,7 +51,7 @@ export function Sidebar({ activeTab, setActiveTab, regValues }: SidebarProps) {
             </Button>
           </div>
         ) : (
-          <div className="p-2 space-y-0.5">
+          <div className="p-2 space-y-0.5 pb-24">
             <div className="py-1 px-2 border-b border-zinc-800/50 mb-1 mt-2">
                <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Integer (GPR)</span>
             </div>

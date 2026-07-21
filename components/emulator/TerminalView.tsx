@@ -3,6 +3,9 @@ import { Button } from "@/components/ui/button";
 import { TerminalSquare, RotateCcw } from "lucide-react";
 import { CPU } from '@/core/cpu';
 
+// PERBAIKAN: Import CSS secara statis di sini agar teks tidak terpotong!
+import '@xterm/xterm/css/xterm.css';
+
 interface TerminalViewProps {
   cpu: CPU;
   activeTab: string;
@@ -25,28 +28,22 @@ export function TerminalView({ cpu, activeTab, isMobile, syncUI, setIsRunning, r
 
     let term: any;
     let fitAddon: any;
-    
-    // KUNCI PERBAIKAN: Melacak status mount untuk mencegah React Strict Mode Race Condition
     let isComponentMounted = true; 
 
     const initTerm = async () => {
       setIsLoaded(false);
       const { Terminal } = await import('@xterm/xterm');
       const { FitAddon } = await import('@xterm/addon-fit');
-      await import('@xterm/xterm/css/xterm.css');
 
-      // Jika komponen sudah dibongkar oleh React sebelum import selesai, hentikan eksekusi
       if (!isComponentMounted) return;
-
-      // KUNCI PERBAIKAN 2: Hapus terminal "hantu" dari DOM jika masih ada sisa
       el.innerHTML = '';
 
       term = new Terminal({
-        theme: { background: '#0d0d0d', foreground: '#e4e4e7', cursor: '#10b981', selectionBackground: '#27272a' },
+        theme: { background: '#0a0a0a', foreground: '#e4e4e7', cursor: '#10b981', selectionBackground: '#27272a' },
         fontFamily: "'Geist Mono', monospace", 
         fontSize: 13, 
         cursorBlink: true,
-        rows: 24 // Berikan jumlah baris bawaan agar tidak menyusut menjadi 1 baris
+        rows: 24 
       });
 
       fitAddon = new FitAddon();
@@ -55,7 +52,6 @@ export function TerminalView({ cpu, activeTab, isMobile, syncUI, setIsRunning, r
       term.open(el);
       termInstance.current = term;
       
-      // Sesuaikan ukuran hanya jika terminal sedang tampil di layar
       if (el.clientWidth > 0 && el.clientHeight > 0) {
          try { fitAddon.fit(); } catch(e){}
       }
@@ -104,12 +100,12 @@ export function TerminalView({ cpu, activeTab, isMobile, syncUI, setIsRunning, r
     ro.observe(el);
 
     return () => {
-      isComponentMounted = false; // Tandai komponen sudah mati
+      isComponentMounted = false; 
       ro.disconnect();
       if (inputDisposable.current) inputDisposable.current.dispose();
       if (term) term.dispose();
     };
-  }, []); // Sengaja dikosongkan agar hanya berjalan 1x saat render awal
+  }, []); 
 
   useEffect(() => {
     if (isMobile && activeTab === 'terminal') {
