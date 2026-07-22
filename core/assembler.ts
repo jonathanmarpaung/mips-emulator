@@ -1,460 +1,395 @@
-import { TEXT_BASE, DATA_BASE, RDATA_BASE } from './memory';
-
-export interface AssembledInstruction {
-  address: number;
-  machineCode: number;
-  hexString: string;
-  originalText: string;
-  originalLine: number; 
-}
-
-export interface AssembledData {
-  address: number;
-  data: Uint8Array;
-}
-
-export interface LineNode {
-  text: string;
-  lineNo: number;
-}
-
-const REG_MAP: Record<string, number> = {
-  '$zero': 0, '$0': 0, '$at': 1, '$1': 1,
-  '$v0': 2, '$2': 2, '$v1': 3, '$3': 3,
-  '$a0': 4, '$4': 4, '$a1': 5, '$5': 5, '$a2': 6, '$6': 6, '$a3': 7, '$7': 7,
-  '$t0': 8, '$8': 8, '$t1': 9, '$9': 9, '$t2': 10, '$10': 10, '$t3': 11, '$11': 11,
-  '$t4': 12, '$12': 12, '$t5': 13, '$13': 13, '$t6': 14, '$14': 14, '$t7': 15, '$15': 15,
-  '$s0': 16, '$16': 16, '$s1': 17, '$17': 17, '$s2': 18, '$18': 18, '$s3': 19, '$19': 19,
-  '$s4': 20, '$20': 20, '$s5': 21, '$21': 21, '$s6': 22, '$22': 22, '$s7': 23, '$23': 23,
-  '$t8': 24, '$24': 24, '$t9': 25, '$25': 25,
-  '$k0': 26, '$26': 26, '$k1': 27, '$27': 27,
-  '$gp': 28, '$28': 28, '$sp': 29, '$29': 29, '$fp': 30, '$30': 30, '$ra': 31, '$31': 31,
-  '$f0': 0, '$f1': 1, '$f2': 2, '$f3': 3, '$f4': 4, '$f5': 5, '$f6': 6, '$f7': 7,
-  '$f8': 8, '$f9': 9, '$f10': 10, '$f11': 11, '$f12': 12, '$f13': 13, '$f14': 14, '$f15': 15,
-  '$f16': 16, '$f17': 17, '$f18': 18, '$f19': 19, '$f20': 20, '$f21': 21, '$f22': 22, '$f23': 23,
-  '$f24': 24, '$f25': 25, '$f26': 26, '$f27': 27, '$f28': 28, '$f29': 29, '$f30': 30, '$f31': 31
-};
+import { DATA_BASE, TEXT_BASE } from './memory';
 
 export class Assembler {
-  private symbolTable: Map<string, number>;
-  private equMap: Map<string, { expr: string, addr: number }>;
-  private instructions: AssembledInstruction[];
-  private dataSegment: AssembledData[];
+  
+  /**
+   * ========================================================================
+   * 1. PREPROCESSOR (Handling .include directives)
+   * Recursively injects file contents and prevents Circular Inclusion.
+   * ========================================================================
+   */
+  private preprocess(code: string, visitedFiles: Set<string> = new Set(['main.s'])): string {
+    const lines = code.split('\n');
+    const processedLines: string[] = [];
 
-  constructor() {
-    this.symbolTable = new Map();
-    this.equMap = new Map();
-    this.instructions = [];
-    this.dataSegment = [];
-  }
-
-  public compile(sourceCode: string) {
-    this.symbolTable.clear();
-    this.equMap.clear();
-    this.instructions = [];
-    this.dataSegment = [];
-
-    const expandedLines = this.preprocessMacros(sourceCode);
-    this.passOne(expandedLines);
-    this.passTwo(expandedLines);
-
-    return {
-      instructions: this.instructions,
-      data: this.dataSegment,
-      symbols: Object.fromEntries(this.symbolTable)
-    };
-  }
-
-  private preprocessMacros(sourceCode: string): LineNode[] {
-    const lines = sourceCode.split('\n');
-    const expandedLines: LineNode[] = [];
-    const macros = new Map<string, { args: string[], body: LineNode[] }>();
-
-    let inMacro = false;
-    let currentMacroName = '';
-    let currentMacroArgs: string[] = [];
-    let currentMacroBody: LineNode[] = [];
-
-    lines.forEach((line, idx) => {
-      const lineNo = idx + 1;
-      const trimmedLine = line.trim();
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
       
-      if (trimmedLine.startsWith('.macro')) {
-        inMacro = true;
-        const macroMatch = trimmedLine.match(/\.macro\s+([a-zA-Z_0-9]+)\s*\((.*)\)/) || trimmedLine.match(/\.macro\s+([a-zA-Z_0-9]+)/);
-        if (macroMatch) {
-          currentMacroName = macroMatch[1];
-          currentMacroArgs = macroMatch[2] ? macroMatch[2].split(',').map(arg => arg.trim()) : [];
-          currentMacroBody = [];
+      // Detect pattern: .include "filename.s"
+      const includeMatch = line.match(/^\s*\.include\s+"([^"]+)"/);
+
+      if (includeMatch) {
+        const filename = includeMatch[1];
+
+        // Absolute Protection: Prevent Infinite Loop (A -> B -> A)
+        if (visitedFiles.has(filename)) {
+          throw new Error(`[Preprocessor Error] Circular include detected in file: "${filename}"`);
         }
-        return;
-      }
 
-      if (trimmedLine === '.end_macro') {
-        inMacro = false;
-        macros.set(currentMacroName, { args: currentMacroArgs, body: currentMacroBody });
-        return;
-      }
+        // Fetch text content from Virtual File System (localStorage)
+        const fileKey = `mips_fs_${filename}`;
+        const fileContent = localStorage.getItem(fileKey);
 
-      if (inMacro) {
-        currentMacroBody.push({ text: line, lineNo });
-        return;
-      }
-
-      let isMacroInvocation = false;
-      for (const [macroName, macroData] of macros.entries()) {
-        const invokeRegex = new RegExp(`^${macroName}\\s*\\((.*)\\)`);
-        const invokeMatch = trimmedLine.match(invokeRegex);
-
-        if (invokeMatch) {
-          isMacroInvocation = true;
-          const providedArgs = invokeMatch[1] ? invokeMatch[1].split(',').map(arg => arg.trim()) : [];
-          for (const bodyNode of macroData.body) {
-            let expandedText = bodyNode.text;
-            macroData.args.forEach((param, index) => {
-              const paramRegex = new RegExp(param.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-              expandedText = expandedText.replace(paramRegex, providedArgs[index] || '');
-            });
-            expandedLines.push({ text: expandedText, lineNo });
-          }
-          break;
+        if (fileContent === null) {
+          throw new Error(`[Preprocessor Error] File not found: "${filename}". Please ensure it exists in the Workspace.`);
         }
+
+        const newVisited = new Set(visitedFiles);
+        newVisited.add(filename);
+
+        // Recursive call: If the included file has its own .include directives
+        const processedInclude = this.preprocess(fileContent, newVisited);
+        
+        // Inject the file content with comment markers for debugging purposes
+        processedLines.push(`# --- BEGIN INCLUDE: ${filename} ---`);
+        processedLines.push(processedInclude);
+        processedLines.push(`# --- END INCLUDE: ${filename} ---`);
+      } else {
+        processedLines.push(line);
       }
+    }
 
-      if (!isMacroInvocation) expandedLines.push({ text: line, lineNo });
-    });
-
-    return expandedLines;
+    return processedLines.join('\n');
   }
 
-  private passOne(lines: LineNode[]) {
-    let currentSegment = '.text';
-    let textAddress = TEXT_BASE;
-    let dataAddress = DATA_BASE;
-    let rdataAddress = RDATA_BASE;
-
-    const getCurrAddress = () => currentSegment === '.text' ? textAddress : (currentSegment === '.rdata' ? rdataAddress : dataAddress);
-    const advanceData = (size: number) => {
-       if (currentSegment === '.rdata') rdataAddress += size;
-       else dataAddress += size;
+  /**
+   * ========================================================================
+   * STRICT SECURITY GATE 1: Register Validation
+   * Throws an error if the register format is unrecognized.
+   * ========================================================================
+   */
+  private parseRegister(regStr: string): number {
+    if (!regStr) throw new Error(`[Syntax Error] Missing register argument!`);
+    const clean = regStr.trim().replace(',', '').toLowerCase();
+    
+    const regMap: Record<string, number> = {
+      '$zero': 0, '$at': 1,
+      '$v0': 2, '$v1': 3,
+      '$a0': 4, '$a1': 5, '$a2': 6, '$a3': 7,
+      '$t0': 8, '$t1': 9, '$t2': 10, '$t3': 11, '$t4': 12, '$t5': 13, '$t6': 14, '$t7': 15,
+      '$s0': 16, '$s1': 17, '$s2': 18, '$s3': 19, '$s4': 20, '$s5': 21, '$s6': 22, '$s7': 23,
+      '$t8': 24, '$t9': 25,
+      '$k0': 26, '$k1': 27,
+      '$gp': 28, '$sp': 29, '$fp': 30, '$ra': 31
     };
 
-    for (const node of lines) {
-      let line = this.cleanLine(node.text);
+    if (regMap[clean] !== undefined) return regMap[clean];
+
+    // Detect FPU registers ($f0 - $f31)
+    if (clean.startsWith('$f')) {
+      const num = parseInt(clean.substring(2), 10);
+      if (!isNaN(num) && num >= 0 && num <= 31) return num;
+    }
+    // Detect raw numerical registers (e.g., $8 or just 8)
+    if (clean.startsWith('$')) {
+      const num = parseInt(clean.substring(1), 10);
+      if (!isNaN(num)) return num;
+    } else {
+      const num = parseInt(clean, 10);
+      if (!isNaN(num)) return num;
+    }
+
+    throw new Error(`[Syntax Error] Invalid or unknown register: "${regStr}"`);
+  }
+
+  /**
+   * ========================================================================
+   * STRICT SECURITY GATE 2: Label & Immediate Validation
+   * ========================================================================
+   */
+  private parseImmediateOrLabel(valStr: string, symbols: Record<string, number>): number {
+    if (!valStr) throw new Error(`[Syntax Error] Missing immediate or label argument!`);
+    
+    // Check if it's a raw number
+    const num = parseInt(valStr, 10);
+    if (!isNaN(num)) return num;
+
+    // Check if it's a declared label
+    if (symbols[valStr] !== undefined) return symbols[valStr];
+
+    throw new Error(`[Reference Error] Unresolved label reference: "${valStr}"`);
+  }
+
+  /**
+   * ========================================================================
+   * 2. MAIN COMPILER (TWO-PASS ASSEMBLER)
+   * ========================================================================
+   */
+  public compile(rawCode: string) {
+    // STAGE 0: Execute Preprocessor (Merge all .include files)
+    const code = this.preprocess(rawCode);
+    const lines = code.split('\n');
+
+    const symbols: Record<string, number> = {};
+    const data: any[] = [];
+    const instructions: any[] = [];
+
+    let currentSection: 'text' | 'data' = 'text';
+    let textAddress = TEXT_BASE; 
+    let dataAddress = DATA_BASE; 
+
+    // ----------------------------------------------------------------------
+    // PASS 1: LABEL COLLECTION, MEMORY ALLOCATION & MACRO PREDICTION
+    // ----------------------------------------------------------------------
+    let pendingLabels: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+      let line = lines[i].split('#')[0].trim(); // Strip comments
       if (!line) continue;
-      
-      if (line === '.text' || line === '.data' || line === '.rdata') { 
-        currentSegment = line; 
-        continue; 
-      }
-      
-      const equMatch = line.match(/^\.equ\s+([a-zA-Z_0-9]+)\s*,\s*(.+)$/) || line.match(/^([a-zA-Z_0-9]+)\s*=\s*(.+)$/);
-      if (equMatch) {
-        this.equMap.set(equMatch[1], { expr: equMatch[2], addr: getCurrAddress() });
-        continue;
-      }
 
-      if (line.startsWith('.set') || line.startsWith('.global') || line.startsWith('.globl')) continue;
+      if (line === '.data') { currentSection = 'data'; continue; }
+      if (line === '.text') { currentSection = 'text'; continue; }
+      if (line.startsWith('.globl')) continue;
 
-      const labelMatch = line.match(/^([a-zA-Z_0-9]+):(.*)$/);
+      // Extract labels (e.g., "main:")
+      const labelMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):/);
       if (labelMatch) {
-        this.symbolTable.set(labelMatch[1], getCurrAddress());
-        line = labelMatch[2].trim();
+        pendingLabels.push(labelMatch[1]);
+        line = line.substring(labelMatch[0].length).trim();
         if (!line) continue;
       }
 
-      if (currentSegment === '.text') {
-        const opcode = line.split(/\s+/)[0].toLowerCase();
-        if (opcode === 'la') textAddress += 8; 
-        else if (['bgt', 'blt', 'bge', 'ble'].includes(opcode)) textAddress += 8; 
-        else textAddress += 4;
-      } else {
-        const dAddr = getCurrAddress();
+      if (currentSection === 'data') {
+        // AUTO-ALIGNMENT: Ensure floats and words are placed on word boundaries (multiple of 4)
+        if (line.startsWith('.word') || line.startsWith('.float')) {
+          const rem = dataAddress % 4;
+          if (rem !== 0) dataAddress += (4 - rem);
+        }
+
+        // Bind pending labels to the aligned data address
+        for (const lbl of pendingLabels) symbols[lbl] = dataAddress;
+        pendingLabels = [];
+
         if (line.startsWith('.asciiz')) {
           const strMatch = line.match(/\.asciiz\s+"(.*)"/);
-          if (strMatch) advanceData(strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').length + 1);
-        } else if (line.startsWith('.ascii ') && !line.startsWith('.asciiz')) {
-          const strMatch = line.match(/\.ascii\s+"(.*)"/);
-          if (strMatch) advanceData(strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t').length);
-        } else if (line.startsWith('.byte')) {
-          advanceData(line.substring(5).split(',').length);
-        } else if (line.startsWith('.half')) {
-          const padding = (2 - (dAddr % 2)) % 2;
-          advanceData(padding + (line.substring(5).split(',').length * 2));
-        } else if (line.startsWith('.word') || line.startsWith('.float')) {
-          const padding = (4 - (dAddr % 4)) % 4;
-          advanceData(padding + (line.substring(6).split(',').length * 4));
-        } else if (line.startsWith('.space')) {
-          // Hanya hitung padding, parsing error dilempar di Pass 2
-          advanceData(parseInt(line.substring(6).trim(), 10) || 0);
-        } else if (line.startsWith('.align')) {
-          const n = parseInt(line.substring(6).trim(), 10);
-          const bound = Math.pow(2, n);
-          advanceData((bound - (dAddr % bound)) % bound);
+          if (strMatch) {
+            let rawStr = strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t');
+            let byteLength = rawStr.length + 1; // +1 for \0 Null Terminator
+            
+            const bytes = new Uint8Array(byteLength);
+            for (let b = 0; b < rawStr.length; b++) bytes[b] = rawStr.charCodeAt(b);
+            bytes[rawStr.length] = 0;
+
+            data.push({ address: dataAddress, data: bytes });
+            dataAddress += byteLength;
+          } else {
+             throw new Error(`[Syntax Error] Invalid .asciiz format on line ${i+1}`);
+          }
+        } 
+        else if (line.startsWith('.float')) {
+          const match = line.match(/\.float\s+([-\d.eE]+)/);
+          if (match) {
+            const floatVal = parseFloat(match[1]);
+            const buffer = new ArrayBuffer(4);
+            const view = new DataView(buffer);
+            view.setFloat32(0, floatVal, false); // false = Big-Endian
+            
+            const bytes = new Uint8Array(4);
+            for(let b=0; b<4; b++) bytes[b] = view.getUint8(b);
+            
+            data.push({ address: dataAddress, data: bytes });
+            dataAddress += 4;
+          } else {
+            throw new Error(`[Syntax Error] Invalid .float format on line ${i+1}`);
+          }
         }
-      }
-    }
-
-    for (const [sym, data] of this.equMap.entries()) {
-      let e = data.expr.replace(/(?<=^|[\s+\-*/()])\.(?=[\s+\-*/()]|$)/g, data.addr.toString());
-      const sortedLabels = Array.from(this.symbolTable.keys()).sort((a,b) => b.length - a.length);
-      for (const label of sortedLabels) {
-        e = e.replace(new RegExp(`\\b${label}\\b`, 'g'), this.symbolTable.get(label)!.toString());
-      }
-      try {
-        const val = new Function('return (' + e + ')')();
-        this.symbolTable.set(sym, val);
-      } catch (err) {
-        throw new Error(`Error: Failed to evaluate .equ expression: ${data.expr}`);
-      }
-    }
-  }
-
-  private passTwo(lines: LineNode[]) {
-    let currentSegment = '.text';
-    let textAddress = TEXT_BASE;
-    let dataAddress = DATA_BASE;
-    let rdataAddress = RDATA_BASE;
-
-    const pushData = (bytes: Uint8Array, addr: number) => {
-      this.dataSegment.push({ address: addr, data: bytes });
-    };
-
-    for (const node of lines) {
-      const originalText = node.text;
-      let line = this.cleanLine(originalText);
-      
-      if (!line) continue;
-      if (line === '.text' || line === '.data' || line === '.rdata') {
-        currentSegment = line; continue;
-      }
-      if (line.match(/^\.equ\s+/) || line.match(/^([a-zA-Z_0-9]+)\s*=/)) continue;
-
-      line = line.replace(/^([a-zA-Z_0-9]+):\s*/, '');
-      if (!line || line.startsWith('.set') || line.startsWith('.global') || line.startsWith('.globl')) continue;
-
-      if (currentSegment === '.text') {
-        const codes = this.encodeInstruction(line, textAddress, node.lineNo); // Inject Line Number
-        for (const code of codes) {
-          this.instructions.push({
-            address: textAddress,
-            machineCode: code,
-            hexString: code.toString(16).padStart(8, '0'),
-            originalText: originalText.trim(),
-            originalLine: node.lineNo
-          });
-          textAddress += 4;
+        else if (line.startsWith('.word')) {
+          // Basic support for array of words: .word 10, 20, 30
+          const parts = line.replace(/,/g, ' ').split(/\s+/).slice(1);
+          for (const p of parts) {
+             if (!p) continue;
+             const val = parseInt(p, 10) || 0;
+             const buffer = new ArrayBuffer(4);
+             const view = new DataView(buffer);
+             view.setInt32(0, val, false); // false = Big-Endian
+             
+             const bytes = new Uint8Array(4);
+             for(let b=0; b<4; b++) bytes[b] = view.getUint8(b);
+             
+             data.push({ address: dataAddress, data: bytes });
+             dataAddress += 4;
+          }
         }
-      } else {
-        let dAddr = currentSegment === '.rdata' ? rdataAddress : dataAddress;
+      } 
+      else {
+        // Bind pending labels to the current instruction address
+        for (const lbl of pendingLabels) symbols[lbl] = textAddress;
+        pendingLabels = [];
+
+        const parts = line.replace(/,/g, ' ').split(/\s+/);
+        const mnemonic = parts[0].toLowerCase();
         
-        if (line.startsWith('.asciiz')) {
-          const strMatch = line.match(/\.asciiz\s+"(.*)"/);
-          if (strMatch) {
-            const str = strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t');
-            const bytes = new Uint8Array(str.length + 1);
-            for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i);
-            pushData(bytes, dAddr);
-            dAddr += bytes.length;
-          }
-        } else if (line.startsWith('.ascii ') && !line.startsWith('.asciiz')) {
-          const strMatch = line.match(/\.ascii\s+"(.*)"/);
-          if (strMatch) {
-            const str = strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t');
-            const bytes = new Uint8Array(str.length);
-            for (let i = 0; i < str.length; i++) bytes[i] = str.charCodeAt(i);
-            pushData(bytes, dAddr);
-            dAddr += bytes.length;
-          }
-        } else if (line.startsWith('.byte')) {
-          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim(), node.lineNo));
-          pushData(new Uint8Array(values), dAddr);
-          dAddr += values.length;
-        } else if (line.startsWith('.half')) {
-          const padding = (2 - (dAddr % 2)) % 2;
-          dAddr += padding;
-          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim(), node.lineNo));
-          const bytes = new Uint8Array(values.length * 2);
-          const view = new DataView(bytes.buffer);
-          for (let i = 0; i < values.length; i++) view.setUint16(i * 2, values[i] >>> 0, false);
-          pushData(bytes, dAddr);
-          dAddr += bytes.length;
-        } else if (line.startsWith('.word')) {
-          const padding = (4 - (dAddr % 4)) % 4;
-          dAddr += padding;
-          const values = line.substring(5).split(',').map(v => this.parseImm(v.trim(), node.lineNo));
-          const bytes = new Uint8Array(values.length * 4);
-          const view = new DataView(bytes.buffer);
-          for (let i = 0; i < values.length; i++) view.setUint32(i * 4, values[i] >>> 0, false);
-          pushData(bytes, dAddr);
-          dAddr += bytes.length;
-        } else if (line.startsWith('.float')) {
-          const padding = (4 - (dAddr % 4)) % 4;
-          dAddr += padding;
-          const values = line.substring(6).split(',').map(v => {
-            const token = v.trim();
-            if (this.symbolTable.has(token)) return this.symbolTable.get(token)!;
-            const parsed = parseFloat(token);
-            if (isNaN(parsed)) throw new Error(`Code:${node.lineNo}: Error: undefined float reference '${token}'`);
-            return parsed;
-          });
-          const bytes = new Uint8Array(values.length * 4);
-          const view = new DataView(bytes.buffer);
-          for (let i = 0; i < values.length; i++) view.setFloat32(i * 4, values[i], false);
-          pushData(bytes, dAddr);
-          dAddr += bytes.length;
-        } else if (line.startsWith('.space')) {
-          const size = this.parseImm(line.substring(6).trim(), node.lineNo);
-          pushData(new Uint8Array(size), dAddr);
-          dAddr += size;
-        } else if (line.startsWith('.align')) {
-          const n = parseInt(line.substring(6).trim(), 10);
-          const bound = Math.pow(2, n);
-          dAddr += (bound - (dAddr % bound)) % bound;
+        let instrSize = 4;
+        
+        // MACRO PREDICTION: Accurately estimate address shifts for pseudo-instructions
+        if (mnemonic === 'la') {
+            instrSize = 8; // la always expands to lui + ori
+        }
+        else if (['lw', 'sw', 'lwc1', 'swc1'].includes(mnemonic)) {
+           // If it lacks '(', it is using a macro label (e.g., lwc1 $f12, pi) -> 8 bytes
+           if (!parts[2]?.includes('(')) instrSize = 8;
+        }
+        else if (mnemonic === 'bge' || mnemonic === 'blt') {
+            instrSize = 8; // Expands to slt + beq/bne
+        }
+        else if (mnemonic === 'li') {
+           const isLabel = isNaN(parseInt(parts[2], 10));
+           const immVal = parseInt(parts[2], 10);
+           // If it references a label or a 32-bit immediate, it expands to 8 bytes
+           if (isLabel || immVal > 32767 || immVal < -32768) instrSize = 8;
         }
 
-        if (currentSegment === '.rdata') rdataAddress = dAddr;
-        else dataAddress = dAddr;
+        textAddress += instrSize; 
       }
     }
-  }
 
-  // Inject lineNo untuk error yang presisi
-  private parseImm(val: string, lineNo: number): number {
-    if (this.symbolTable.has(val)) return this.symbolTable.get(val)!;
-    const parsed = val.toLowerCase().startsWith('0x') ? parseInt(val, 16) : parseInt(val, 10);
-    if (isNaN(parsed)) {
-      throw new Error(`Code:${lineNo}: Error: undefined reference or invalid immediate '${val}'`);
+    // ----------------------------------------------------------------------
+    // PASS 2: TRANSLATE INSTRUCTIONS (.text) -> MACHINE CODE
+    // ----------------------------------------------------------------------
+    textAddress = TEXT_BASE; 
+    currentSection = 'text'; 
+
+    for (let i = 0; i < lines.length; i++) {
+      let originalText = lines[i].trim();
+      let line = lines[i].split('#')[0].trim();
+      if (!line) continue;
+
+      if (line === '.data') { currentSection = 'data'; continue; }
+      if (line === '.text') { currentSection = 'text'; continue; }
+      if (line.startsWith('.globl')) continue;
+
+      const labelMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):/);
+      if (labelMatch) {
+        line = line.substring(labelMatch[0].length).trim();
+        if (!line) continue;
+      }
+
+      if (currentSection === 'text') {
+         const parts = line.replace(/,/g, ' ').split(/\s+/);
+         const mnemonic = parts[0].toLowerCase();
+
+         // Smart Helper to push instruction to memory array
+         const emit = (mCode: number, textToDisplay: string) => {
+           instructions.push({
+             address: textAddress,
+             machineCode: mCode,
+             hexString: (mCode >>> 0).toString(16).padStart(8, '0'),
+             originalText: textToDisplay, // Adjusts dynamically for macro expansions
+             originalLine: i + 1
+           });
+           textAddress += 4;
+         };
+
+         if (mnemonic === 'nop') { emit(0, originalText); }
+         else if (mnemonic === 'syscall') { emit(0x0c, originalText); }
+         else if (['add', 'sub', 'and', 'or', 'slt'].includes(mnemonic)) {
+           const rd = this.parseRegister(parts[1]);
+           const rs = this.parseRegister(parts[2]);
+           const rt = this.parseRegister(parts[3]);
+           let funct = 0x20;
+           if (mnemonic === 'sub') funct = 0x22;
+           if (mnemonic === 'and') funct = 0x24;
+           if (mnemonic === 'or')  funct = 0x25;
+           if (mnemonic === 'slt') funct = 0x2a;
+           emit((0 << 26) | (rs << 21) | (rt << 16) | (rd << 11) | (0 << 6) | funct, originalText);
+         }
+         else if (['addi', 'addiu', 'slti', 'andi', 'ori'].includes(mnemonic)) {
+           const rt = this.parseRegister(parts[1]);
+           const rs = this.parseRegister(parts[2]);
+           const imm = this.parseImmediateOrLabel(parts[3], symbols);
+           let op = 0x08; 
+           if (mnemonic === 'addiu') op = 0x09;
+           if (mnemonic === 'slti')  op = 0x0a;
+           if (mnemonic === 'andi')  op = 0x0c;
+           if (mnemonic === 'ori')   op = 0x0d;
+           emit((op << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF), originalText);
+         }
+         else if (mnemonic === 'move') {
+           const rd = this.parseRegister(parts[1]);
+           const rs = this.parseRegister(parts[2]);
+           emit((0 << 26) | (rs << 21) | (0 << 16) | (rd << 11) | (0 << 6) | 0x20, originalText);
+         }
+         else if (mnemonic === 'la' || mnemonic === 'li') {
+           const rt = this.parseRegister(parts[1]);
+           const targetAddr = this.parseImmediateOrLabel(parts[2], symbols);
+
+           // 'la' always uses lui+ori. 'li' uses it if > 16-bit or label reference
+           if (mnemonic === 'la' || targetAddr > 32767 || targetAddr < -32768) {
+               const upper = (targetAddr >>> 16) & 0xFFFF;
+               const lower = targetAddr & 0xFFFF;
+               emit((0x0f << 26) | (0 << 21) | (1 << 16) | upper, `lui $at, 0x${upper.toString(16)}`);
+               emit((0x0d << 26) | (1 << 21) | (rt << 16) | lower, `ori ${parts[1]}, $at, 0x${lower.toString(16)}`);
+           } else {
+               // Simple 'li' fits in a single addiu instruction
+               emit((0x09 << 26) | (0 << 21) | (rt << 16) | (targetAddr & 0xFFFF), originalText); 
+           }
+         }
+         else if (['lw', 'sw', 'lwc1', 'swc1'].includes(mnemonic)) {
+            let op = 0;
+            if (mnemonic === 'lw')   op = 0x23;
+            if (mnemonic === 'sw')   op = 0x2b;
+            if (mnemonic === 'lwc1') op = 0x31;
+            if (mnemonic === 'swc1') op = 0x39;
+
+            const rt = this.parseRegister(parts[1]);
+            const memMatch = parts[2] ? parts[2].match(/^([-\d]+)\((.+)\)$/) : null;
+
+            if (memMatch) {
+                // Standard offset format: 0($t0)
+                const imm = parseInt(memMatch[1], 10);
+                const rs = this.parseRegister(memMatch[2]);
+                emit((op << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF), originalText);
+            } else {
+                // Macro format: lwc1 $f12, pi  ->  Expands to LUI + LWC1
+                const targetAddr = this.parseImmediateOrLabel(parts[2], symbols);
+                const upper = (targetAddr >>> 16) & 0xFFFF;
+                const lower = targetAddr & 0xFFFF;
+                emit((0x0f << 26) | (0 << 21) | (1 << 16) | upper, `lui $at, 0x${upper.toString(16)}`);
+                emit((op << 26) | (1 << 21) | (rt << 16) | lower, `${mnemonic} ${parts[1]}, 0x${lower.toString(16)}($at)`);
+            }
+         }
+         else if (mnemonic === 'j' || mnemonic === 'jal') {
+           const targetAddr = this.parseImmediateOrLabel(parts[1], symbols);
+           const op = mnemonic === 'j' ? 0x02 : 0x03;
+           const addressValue = (targetAddr >>> 2) & 0x03FFFFFF; // Word-aligned shift
+           emit((op << 26) | addressValue, originalText);
+         }
+         else if (mnemonic === 'jr') {
+           const rs = this.parseRegister(parts[1]);
+           emit((0 << 26) | (rs << 21) | (0 << 16) | (0 << 11) | (0 << 6) | 0x08, originalText);
+         }
+         else if (['beq', 'bne', 'bge', 'blt'].includes(mnemonic)) {
+            let op = mnemonic === 'beq' ? 0x04 : (mnemonic === 'bne' ? 0x05 : 0);
+            const rs = this.parseRegister(parts[1]);
+            const rt = this.parseRegister(parts[2]);
+            const targetAddr = this.parseImmediateOrLabel(parts[3], symbols);
+
+            if (op !== 0) { 
+                // Pure branch instructions (beq, bne)
+                const offset = ((targetAddr - (textAddress + 4)) >> 2) & 0xFFFF;
+                emit((op << 26) | (rs << 21) | (rt << 16) | offset, originalText);
+            } else { 
+                // Macro branch instructions (bge, blt) expanding into slt + beq/bne
+                const offset = ((targetAddr - (textAddress + 8)) >> 2) & 0xFFFF; 
+                
+                if (mnemonic === 'bge') { 
+                    emit((0 << 26) | (rs << 21) | (rt << 16) | (1 << 11) | (0 << 6) | 0x2a, `slt $at, ${parts[1]}, ${parts[2]}`);
+                    emit((0x04 << 26) | (1 << 21) | (0 << 16) | offset, `beq $at, $zero, ${parts[3]}`);
+                } else if (mnemonic === 'blt') { 
+                    emit((0 << 26) | (rs << 21) | (rt << 16) | (1 << 11) | (0 << 6) | 0x2a, `slt $at, ${parts[1]}, ${parts[2]}`);
+                    emit((0x05 << 26) | (1 << 21) | (0 << 16) | offset, `bne $at, $zero, ${parts[3]}`);
+                }
+            }
+         }
+         // ========================================================================
+         // STRICT SECURITY GATE 3: Catch Unknown/Invalid Instructions
+         // ========================================================================
+         else {
+           throw new Error(`[Syntax Error] Unknown instruction or invalid format: "${mnemonic}" on line ${i + 1}\n=> ${originalText}`);
+         }
+      }
     }
-    return parsed;
-  }
 
-  private encodeInstruction(instruction: string, pc: number, lineNo: number): number[] {
-    const parts = instruction.replace(/,/g, ' ').trim().split(/\s+/);
-    const opcode = parts[0].toLowerCase();
-    
-    const getReg = (regName: string) => {
-      if (!(regName in REG_MAP)) throw new Error(`Code:${lineNo}: Error: invalid register '${regName}'`);
-      return REG_MAP[regName];
-    };
-
-    const parseMemArg = (arg: string) => {
-      const match = arg.match(/^(-?(?:0x[0-9a-fA-F]+|\d+|[a-zA-Z_0-9]+))\(([a-zA-Z0-9_$]+)\)$/);
-      if (match) return { offset: this.parseImm(match[1], lineNo) & 0xFFFF, reg: getReg(match[2]) };
-      throw new Error(`Code:${lineNo}: Error: invalid memory operand '${arg}'`);
-    };
-
-    // Validasi jumlah argumen minimal agar tidak terjadi bug saat missing operand
-    if (parts.length < 2 && opcode !== 'syscall' && opcode !== 'nop') {
-       throw new Error(`Code:${lineNo}: Error: missing operands for instruction '${opcode}'`);
-    }
-
-    switch (opcode) {
-      case 'li': return [(9 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[2], lineNo) & 0xFFFF)];
-      case 'la': 
-        const rtLa = getReg(parts[1]);
-        if (!this.symbolTable.has(parts[2])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[2]}'`);
-        const laAddr = this.symbolTable.get(parts[2])!;
-        return [
-          (0x0F << 26) | (0 << 21) | (1 << 16) | ((laAddr >>> 16) & 0xFFFF),
-          (0x0D << 26) | (1 << 21) | (rtLa << 16) | (laAddr & 0xFFFF)
-        ];
-      case 'move':  return [(0 << 26) | (getReg(parts[2]) << 21) | (0 << 16) | (getReg(parts[1]) << 11) | 0x20];
-      case 'syscall': return [0x0000000c]; 
-      case 'nop': return [0x00000000];
-
-      case 'add':   return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x20];
-      case 'addu':  return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x21];
-      case 'sub':   return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x22];
-      case 'subu':  return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x23];
-      case 'and':   return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x24];
-      case 'or':    return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x25];
-      case 'mult':  return [(0 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | (0 << 11) | 0x18];
-      case 'div':   return [(0 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | (0 << 11) | 0x1A];
-      case 'sll':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((this.parseImm(parts[3], lineNo) & 0x1F) << 6) | 0x00];
-      case 'srl':   return [(0 << 26) | (0 << 21) | (getReg(parts[2]) << 16) | (getReg(parts[1]) << 11) | ((this.parseImm(parts[3], lineNo) & 0x1F) << 6) | 0x02];
-      case 'slt':   return [(0 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x2A];
-      case 'mflo':  return [(0 << 26) | (0 << 21) | (0 << 16) | (getReg(parts[1]) << 11) | 0x12];
-      case 'mfhi':  return [(0 << 26) | (0 << 21) | (0 << 16) | (getReg(parts[1]) << 11) | 0x10];
-      case 'mul':   return [(28 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[3]) << 16) | (getReg(parts[1]) << 11) | 0x02];
-
-      case 'addi':  return [(8 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
-      case 'addiu': return [(9 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
-      case 'andi':  return [(12 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
-      case 'ori':   return [(13 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
-      case 'xori':  return [(14 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
-      case 'lui':   return [(15 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[2], lineNo) & 0xFFFF)];
-      case 'slti':  return [(10 << 26) | (getReg(parts[2]) << 21) | (getReg(parts[1]) << 16) | (this.parseImm(parts[3], lineNo) & 0xFFFF)];
-
-      case 'sw':    
-      case 'lw':    
-      case 'lb':    
-      case 'sb': {  
-        const mem = parseMemArg(parts[2]);
-        let op = 0;
-        if (opcode === 'sw') op = 43; else if (opcode === 'lw') op = 35; else if (opcode === 'lb') op = 32; else if (opcode === 'sb') op = 40;
-        return [(op << 26) | (mem.reg << 21) | (getReg(parts[1]) << 16) | mem.offset];
-      }
-
-      case 'beq': {
-        if (!this.symbolTable.has(parts[3])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[3]}'`);
-        const beqOffset = ((this.symbolTable.get(parts[3])! - (pc + 4)) >> 2) & 0xFFFF;
-        return [(4 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | beqOffset];
-      }
-      case 'bne': {
-        if (!this.symbolTable.has(parts[3])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[3]}'`);
-        const bneOffset = ((this.symbolTable.get(parts[3])! - (pc + 4)) >> 2) & 0xFFFF;
-        return [(5 << 26) | (getReg(parts[1]) << 21) | (getReg(parts[2]) << 16) | bneOffset];
-      }
-      case 'j':     
-      case 'jal': { 
-        if (!this.symbolTable.has(parts[1])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[1]}'`);
-        const jIndex = (this.symbolTable.get(parts[1])! >>> 2) & 0x03FFFFFF;
-        const jOp = opcode === 'j' ? 2 : 3;
-        return [(jOp << 26) | jIndex];
-      }
-      case 'jr':    return [(0 << 26) | (getReg(parts[1]) << 21) | (0 << 16) | (0 << 11) | 0x08];
-
-      case 'bgt':
-      case 'blt':
-      case 'bge':
-      case 'ble': {
-        if (!this.symbolTable.has(parts[3])) throw new Error(`Code:${lineNo}: Error: undefined label '${parts[3]}'`);
-        const r1 = getReg(parts[1]); const r2 = getReg(parts[2]);
-        const bTarget = ((this.symbolTable.get(parts[3])! - (pc + 8)) >> 2) & 0xFFFF;
-        const rs_slt = (opcode === 'bgt' || opcode === 'ble') ? r2 : r1;
-        const rt_slt = (opcode === 'bgt' || opcode === 'ble') ? r1 : r2;
-        const branchOp = (opcode === 'bgt' || opcode === 'blt') ? 5 : 4; 
-        return [
-          (0 << 26) | (rs_slt << 21) | (rt_slt << 16) | (1 << 11) | 0x2A, 
-          (branchOp << 26) | (1 << 21) | (0 << 16) | bTarget              
-        ];
-      }
-
-      case 'mfc1': return [(17 << 26) | (0 << 21) | (getReg(parts[1]) << 16) | (getReg(parts[2]) << 11) | 0x00];
-      case 'mtc1': return [(17 << 26) | (4 << 21) | (getReg(parts[1]) << 16) | (getReg(parts[2]) << 11) | 0x00];
-      case 'lwc1': {
-        const memLw = parseMemArg(parts[2]);
-        return [(49 << 26) | (memLw.reg << 21) | (getReg(parts[1]) << 16) | memLw.offset];
-      }
-      case 'swc1': {
-        const memSw = parseMemArg(parts[2]);
-        return [(57 << 26) | (memSw.reg << 21) | (getReg(parts[1]) << 16) | memSw.offset];
-      }
-      case 'add.s': return [(17 << 26) | (16 << 21) | (getReg(parts[3]) << 16) | (getReg(parts[2]) << 11) | (getReg(parts[1]) << 6) | 0x00];
-      case 'sub.s': return [(17 << 26) | (16 << 21) | (getReg(parts[3]) << 16) | (getReg(parts[2]) << 11) | (getReg(parts[1]) << 6) | 0x01];
-      case 'mul.s': return [(17 << 26) | (16 << 21) | (getReg(parts[3]) << 16) | (getReg(parts[2]) << 11) | (getReg(parts[1]) << 6) | 0x02];
-      case 'div.s': return [(17 << 26) | (16 << 21) | (getReg(parts[3]) << 16) | (getReg(parts[2]) << 11) | (getReg(parts[1]) << 6) | 0x03];
-
-      default: 
-        // LONTARKAN ERROR ala GNU Compiler (misal: Code:45: Error: unrecognized opcode 'subi')
-        throw new Error(`Code:${lineNo}: Error: unrecognized opcode or macro '${opcode}'`);
-    }
-  }
-
-  private cleanLine(line: string): string {
-    const commentIndex = line.indexOf('#');
-    if (commentIndex !== -1) line = line.substring(0, commentIndex);
-    return line.trim();
+    return { instructions, data, symbols };
   }
 }

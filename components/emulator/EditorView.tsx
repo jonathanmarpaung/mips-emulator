@@ -1,100 +1,145 @@
 import React, { useRef, useEffect } from 'react';
-import dynamic from 'next/dynamic';
-import { Button } from "@/components/ui/button";
-
-const MonacoEditor = dynamic(() => import('@monaco-editor/react'), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-full flex flex-col items-center justify-center bg-[#0d0d0d]">
-      <div className="w-6 h-6 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin mb-3"></div>
-      <span className="text-[10px] text-zinc-500 font-mono animate-pulse uppercase tracking-widest">Starting Editor...</span>
-    </div>
-  )
-});
+import Editor, { useMonaco } from '@monaco-editor/react';
 
 interface EditorViewProps {
   code: string;
-  setCode: (c: string) => void;
+  setCode: (code: string) => void;
   setIsCompiled: (v: boolean) => void;
   editorBreakpoints: Set<number>;
-  setEditorBreakpoints: React.Dispatch<React.SetStateAction<Set<number>>>;
+  setEditorBreakpoints: (bps: Set<number> | ((prev: Set<number>) => Set<number>)) => void;
   isMobile: boolean;
 }
 
 export function EditorView({ code, setCode, setIsCompiled, editorBreakpoints, setEditorBreakpoints, isMobile }: EditorViewProps) {
+  const monaco = useMonaco();
   const editorRef = useRef<any>(null);
-  const monacoRef = useRef<any>(null);
-  const decorationsRef = useRef<string[]>([]);
 
+  // ---------------------------------------------------------------------------
+  // 0. PEREDAM ERROR "CANCELED" BAWAAN MONACO
+  // Ini akan mencegah terminal Next.js Anda dipenuhi log error merah.
+  // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!editorRef.current || !monacoRef.current) return;
-    const newDecorations = Array.from(editorBreakpoints).map(line => ({
-      range: new monacoRef.current.Range(line, 1, line, 1),
-      options: { isWholeLine: false, glyphMarginClassName: 'breakpoint-glyph' }
-    }));
-    decorationsRef.current = editorRef.current.deltaDecorations(decorationsRef.current, newDecorations);
-  }, [editorBreakpoints]);
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      if (reason && (
+        reason.name === 'Cancel' || 
+        reason.message === 'Canceled' || 
+        reason.message === 'operation is manually canceled' || 
+        reason.type === 'cancelation'
+      )) {
+        // Hentikan pelemparan error ke konsol
+        event.preventDefault(); 
+      }
+    };
 
-  const handleEditorDidMount = (editor: any, monaco: any) => {
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // 1. INJEKSI SYNTAX HIGHLIGHTING MIPS
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (monaco) {
+      monaco.languages.register({ id: 'mips' });
+      monaco.languages.setMonarchTokensProvider('mips', {
+        tokenizer: {
+          root: [
+            [/#.*/, 'comment'],
+            [/\.(data|text|globl|asciiz|word|float|space|align|byte|half)/, 'keyword'],
+            [/\$[a-zA-Z0-9]+/, 'variable.predefined'],
+            [/[a-zA-Z_][a-zA-Z0-9_]*:/, 'type.identifier'],
+            [/\b(add|addi|addiu|sub|mul|div|and|andi|or|ori|xor|nor|slt|slti|sll|srl|sra|lw|sw|lwc1|swc1|lb|sb|lh|sh|beq|bne|bge|blt|bgt|ble|j|jal|jr|syscall|li|la|move|mfhi|mflo)\b/, 'keyword.control'],
+            [/"([^"\\]|\\.)*"/, 'string'],
+            [/-?\d+(\.\d+)?([eE][+-]?\d+)?/, 'number'],
+          ]
+        }
+      });
+    }
+  }, [monaco]);
+
+  // ---------------------------------------------------------------------------
+  // 2. PENANGANAN MOUNT & BREAKPOINTS
+  // ---------------------------------------------------------------------------
+  const handleEditorDidMount = (editor: any, monacoInstance: any) => {
     editorRef.current = editor;
-    monacoRef.current = monaco;
-    
-    monaco.editor.defineTheme('mips-dark', {
-      base: 'vs-dark', inherit: true,
-      rules: [{ background: '0d0d0d' }],
-      colors: { 'editor.background': '#0d0d0d', 'editor.lineHighlightBackground': '#1a1a1a', 'editorLineNumber.foreground': '#52525b' }
-    });
-    monaco.editor.setTheme('mips-dark');
 
     editor.onMouseDown((e: any) => {
-      if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN) {
-        const lineNo = e.target.position.lineNumber;
+      if (e.target.type === 2) { 
+        const line = e.target.position.lineNumber;
         setEditorBreakpoints((prev: Set<number>) => {
-          const nw = new Set(prev);
-          if (nw.has(lineNo)) nw.delete(lineNo); else nw.add(lineNo);
-          return nw;
+          const newBps = new Set(prev);
+          if (newBps.has(line)) newBps.delete(line);
+          else newBps.add(line);
+          return newBps;
         });
       }
     });
   };
 
-  const insertText = (text: string) => {
-    if (editorRef.current && monacoRef.current) {
-      const editor = editorRef.current;
-      const position = editor.getPosition();
-      editor.executeEdits('shortcut-bar', [{
-        range: new monacoRef.current.Range(position.lineNumber, position.column, position.lineNumber, position.column),
-        text: text,
-        forceMoveMarkers: true
-      }]);
-      editor.focus(); 
+  // ---------------------------------------------------------------------------
+  // 3. PENCEGAH KURSOR MELOMPAT
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (editorRef.current && code !== editorRef.current.getValue()) {
+      editorRef.current.setValue(code);
+    }
+  }, [code]);
+
+  const handleEditorChange = (value: string | undefined) => {
+    if (value !== undefined) {
+       setCode(value);
+       setIsCompiled(false);
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // 4. PEMBARUAN VISUAL BREAKPOINT
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (editorRef.current && monaco) {
+        const decorations = Array.from(editorBreakpoints).map(line => ({
+          range: new monaco.Range(line, 1, line, 1),
+          options: {
+            isWholeLine: false,
+            glyphMarginClassName: 'breakpoint-glyph',
+            glyphMarginHoverMessage: { value: 'Breakpoint' }
+          }
+        }));
+        editorRef.current.__decorations = editorRef.current.deltaDecorations(editorRef.current.__decorations || [], decorations);
+    }
+  }, [editorBreakpoints, monaco]);
+
   return (
-    <div className="flex-1 flex flex-col w-full h-full min-h-0 bg-[#0d0d0d]">
-      <div className="flex-1 relative min-h-0 w-full h-full">
-        <MonacoEditor 
-          height="100%" 
-          language="mips" 
-          theme="mips-dark" 
-          value={code} 
-          onChange={(val) => { setCode(val || ""); setIsCompiled(false); }} 
-          onMount={handleEditorDidMount} 
-          options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: "on" }} 
-        />
-      </div>
-      
-      {/* QUICK KEYS SHORTCUT BAR UNTUK MOBILE */}
-      {isMobile && (
-        <div className="h-12 bg-[#09090b] border-t border-zinc-900 flex items-center gap-1.5 px-2 overflow-x-auto hide-scrollbar shrink-0 shadow-[0_-4px_10px_rgba(0,0,0,0.2)] z-10 w-full">
-          {['\t', '$', ':', ',', '#', '.', '(', ')', '%', '"'].map((char, i) => (
-            <Button key={i} onClick={() => insertText(char)} variant="secondary" className="h-8 min-w-10 px-3 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 text-xs font-mono rounded">
-              {char === '\t' ? 'TAB' : char}
-            </Button>
-          ))}
-        </div>
-      )}
+    <div className="w-full h-full relative bg-[#0d0d0d]">
+      <Editor
+        height="100%"
+        language="mips"
+        theme="vs-dark"
+        defaultValue={code} 
+        onChange={handleEditorChange}
+        onMount={handleEditorDidMount}
+        options={{
+          fontSize: isMobile ? 12 : 14,
+          minimap: { enabled: !isMobile },
+          wordWrap: 'on',
+          lineNumbers: 'on',
+          glyphMargin: true,
+          folding: false,
+          lineDecorationsWidth: 10,
+          automaticLayout: true,
+          scrollBeyondLastLine: false,
+          contextmenu: !isMobile,
+          quickSuggestions: false,
+          parameterHints: { enabled: false },
+          codeLens: false,
+          scrollbar: {
+            useShadows: false,
+            verticalScrollbarSize: 10,
+            horizontalScrollbarSize: 10,
+          }
+        }}
+      />
     </div>
   );
 }
