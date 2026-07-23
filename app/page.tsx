@@ -4,11 +4,18 @@ import React, { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Input } from "@/components/ui/input";
 import { 
   Play, StepForward, RotateCcw, Hammer, Pause, AlertTriangle,
   Cpu, Code2, FileCode2, Database, Menu, TerminalSquare, LayoutList, FolderCode,
-  File as FileIcon, X
+  File as FileIcon, X, Settings2, Info
 } from "lucide-react";
+
+// =======================================================================
+// IMPORT SHADCN UI (FIELD & ALERT)
+// =======================================================================
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 
 // =======================================================================
 // IMPORT INTI EMULATOR & MEMORY
@@ -116,6 +123,10 @@ export default function MipsEmulatorPage() {
   // =======================================================================
   const [isRunning, setIsRunning] = useState(false);
   const [isCompiled, setIsCompiled] = useState(false);
+
+  // Alert State (Shadcn Notification)
+  const [appAlert, setAppAlert] = useState<{ title: string, message: string, variant: "default" | "destructive" } | null>(null);
+  const alertTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   
   const [regValues, setRegValues] = useState<Record<string, string>>({});
   const [disassembly, setDisassembly] = useState<any[]>([]);
@@ -188,8 +199,15 @@ export default function MipsEmulatorPage() {
     setOpenTabs(prev => prev.filter(tab => files.includes(tab)));
   }, [files]);
 
+  // Fungsi helper Alert Global
+  const triggerAlert = (title: string, message: string, variant: "default" | "destructive") => {
+    setAppAlert({ title, message, variant });
+    if (alertTimeoutRef.current) clearTimeout(alertTimeoutRef.current);
+    alertTimeoutRef.current = setTimeout(() => setAppAlert(null), 5000);
+  };
+
   // =======================================================================
-  // CUSTOM NATIVE RESIZER LOGIC (PENGGANTI LIBRARY)
+  // CUSTOM NATIVE RESIZER LOGIC (ANTI-SQUISH)
   // =======================================================================
   const [sidebarWidth, setSidebarWidth] = useState(250);
   const [terminalWidth, setTerminalWidth] = useState(400);
@@ -200,7 +218,7 @@ export default function MipsEmulatorPage() {
     const startWidth = sidebarWidth;
 
     const onMouseMove = (mouseMoveEvent: MouseEvent) => {
-      const newWidth = Math.max(150, Math.min(500, startWidth + mouseMoveEvent.clientX - startX));
+      const newWidth = Math.max(180, Math.min(500, startWidth + mouseMoveEvent.clientX - startX));
       setSidebarWidth(newWidth);
     };
 
@@ -258,7 +276,6 @@ export default function MipsEmulatorPage() {
     setIsCompiled(false);
   };
 
-  // Drag and Drop (Swap) Logic for Tabs
   const handleTabDragStart = (e: React.DragEvent, tab: string) => {
     e.dataTransfer.setData('text/plain', tab);
     e.dataTransfer.effectAllowed = 'move';
@@ -281,8 +298,8 @@ export default function MipsEmulatorPage() {
       
       if (sourceIndex === -1 || targetIndex === -1) return prev;
 
-      newTabs.splice(sourceIndex, 1); // Cabut tab dari posisi lama
-      newTabs.splice(targetIndex, 0, sourceTab); // Masukkan ke posisi baru
+      newTabs.splice(sourceIndex, 1); 
+      newTabs.splice(targetIndex, 0, sourceTab); 
       return newTabs;
     });
   };
@@ -333,12 +350,9 @@ export default function MipsEmulatorPage() {
   };
 
   const handleSearchMemory = (overrideAddr?: any) => {
-    // 1. Mencegah reload halaman jika fungsi dipanggil dari form (tekan Enter)
     if (overrideAddr && typeof overrideAddr === 'object' && overrideAddr.preventDefault) {
       overrideAddr.preventDefault();
     }
-    
-    // 2. Ambil target: Jika berupa string (dari tombol Quick Jump), gunakan itu. Jika tidak, gunakan input state.
     const targetStr = typeof overrideAddr === 'string' ? overrideAddr : memorySearchInput;
     
     const parsedAddr = parseInt(targetStr, 16);
@@ -360,6 +374,7 @@ export default function MipsEmulatorPage() {
 
   const handleBuild = () => {
     setIsRunning(false);
+    setAppAlert(null);
     memoryInstance.current.reset();
     cpuInstance.current.reset();
     
@@ -368,9 +383,7 @@ export default function MipsEmulatorPage() {
     try {
       const codeToCompile = fileContents['main.s'] !== undefined ? fileContents['main.s'] : fileContents[activeFile];
       
-      if (!codeToCompile) {
-        throw new Error("No code found to compile.");
-      }
+      if (!codeToCompile) throw new Error("No code found to compile.");
 
       const compiled = assemblerInstance.current.compile(codeToCompile);
       const newDisasm = [];
@@ -407,11 +420,14 @@ export default function MipsEmulatorPage() {
       
       cpuInstance.current.onPrint(`\x1b[32;1m[Build Success]\x1b[0m Binary compiled successfully.\r\n`);
       cpuInstance.current.onPrint(`\x1b[36m$ OS Loader:\x1b[0m Entry point set to \x1b[33mmain\x1b[0m at 0x${entryAddress.toString(16).padStart(8, '0')}\r\n`);
+      
+      triggerAlert("Build Success", "Code has been compiled and memory is populated.", "default");
       return true;
     } catch (err: any) {
       setDisassembly([]); setMemoryDump([]); setAddressBreakpoints(new Set()); setIsCompiled(false);
       memoryInstance.current.reset(); cpuInstance.current.reset(); syncUI();
       cpuInstance.current.onPrint(`\x1b[31;1m[Build Failed]\x1b[0m ${err.message}\r\n`);
+      triggerAlert("Build Failed", err.message, "destructive");
       return false;
     }
   };
@@ -435,6 +451,7 @@ export default function MipsEmulatorPage() {
     } catch (err: any) {
       setIsRunning(false); syncUI();
       cpuInstance.current.onPrint(`\r\n\x1b[31;1m[CPU Exception] ${err.message}\x1b[0m\r\n`);
+      triggerAlert("CPU Exception", err.message, "destructive");
     }
   };
 
@@ -459,7 +476,10 @@ export default function MipsEmulatorPage() {
     if (!isCompiled) { const isSuccess = handleBuild(); if (!isSuccess) return; }
     try {
       isResumingRef.current = true; cpuInstance.current.step(); syncUI();
-    } catch (err: any) { cpuInstance.current.onPrint(`\r\n\x1b[31;1m[Exception] ${err.message}\x1b[0m\r\n`); }
+    } catch (err: any) { 
+      cpuInstance.current.onPrint(`\r\n\x1b[31;1m[Exception] ${err.message}\x1b[0m\r\n`); 
+      triggerAlert("Runtime Exception", err.message, "destructive");
+    }
   };
 
   const handleResetCPU = () => {
@@ -467,11 +487,13 @@ export default function MipsEmulatorPage() {
     cpuInstance.current.pc = entryPointRef.current; 
     isResumingRef.current = false; setIsRunning(false); syncUI();
     cpuInstance.current.onPrint(`\r\n\x1b[36m$ CPU Reset.\x1b[0m PC restored to 0x${entryPointRef.current.toString(16).padStart(8, '0')}\r\n`);
+    triggerAlert("CPU Reset", "Registers and Program Counter have been restored.", "default");
   };
 
   const handleResetAll = () => {
     setIsCompiled(false); 
     setIsRunning(false);
+    setAppAlert(null);
     memoryInstance.current.reset(); 
     cpuInstance.current.reset();
     entryPointRef.current = TEXT_BASE;
@@ -480,14 +502,11 @@ export default function MipsEmulatorPage() {
     syncUI();
     
     cpuInstance.current.onPrint('\r\n\x1b[32m[System]\x1b[0m MIPS32 OS Ready (Emulator Reset).\r\n');
-    cpuInstance.current.onPrint('\x1b[36m$ Workspace files remain safe.\x1b[0m\r\n');
+    triggerAlert("System Reset", "Memory and CPU cleared. Workspace is safe.", "default");
   };
 
   if (!isMounted) return <div className="flex h-screen w-screen items-center justify-center bg-[#09090b]"><span className="text-zinc-600 font-mono text-sm animate-pulse">Initializing IDE...</span></div>;
 
-  // =======================================================================
-  // RENDER UI
-  // =======================================================================
   return (
     <div className="fixed inset-0 flex flex-col bg-[#09090b] text-zinc-300 font-sans w-full h-[100dvh] overflow-hidden">
       <style>{`
@@ -495,6 +514,32 @@ export default function MipsEmulatorPage() {
         .hide-scrollbar::-webkit-scrollbar { display: none; }
         .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
       `}</style>
+
+      {/* ===================================================================== */}
+      {/* SHADCN ALERT TOAST (RESPONSIF MOBILE TOP & DESKTOP BOTTOM-RIGHT)        */}
+      {/* ===================================================================== */}
+      {appAlert && (
+        <div className="fixed z-[150] w-[92%] sm:w-full max-w-sm top-6 left-1/2 -translate-x-1/2 sm:top-auto sm:bottom-8 sm:left-auto sm:right-8 sm:translate-x-0 animate-in fade-in zoom-in-95 slide-in-from-top-8 sm:slide-in-from-bottom-8 duration-300">
+          <Alert variant={appAlert.variant} className={`relative overflow-hidden backdrop-blur-xl border shadow-2xl ${appAlert.variant === "destructive" ? "border-red-900/50 bg-red-950/90 text-red-200" : "border-emerald-900/40 bg-[#0d0d0d]/95 text-emerald-200"}`}>
+            
+            <div className={`absolute left-0 top-0 bottom-0 w-1 ${appAlert.variant === "destructive" ? "bg-red-500" : "bg-emerald-500"}`} />
+
+            <div className="pl-2">
+              {appAlert.variant === "destructive" ? <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5" /> : <Info className="w-5 h-5 text-emerald-400 mt-0.5" />}
+              <AlertTitle className={`font-bold tracking-wide text-sm mb-1 ${appAlert.variant === "destructive" ? "text-red-400" : "text-emerald-400"}`}>
+                {appAlert.title}
+              </AlertTitle>
+              <AlertDescription className="text-zinc-400 font-mono text-xs leading-relaxed pr-6">
+                {appAlert.message}
+              </AlertDescription>
+            </div>
+            
+            <AlertAction className="absolute top-3 right-3">
+              <button onClick={() => setAppAlert(null)} className="text-zinc-500 hover:text-zinc-200 transition-colors p-1.5 rounded-full hover:bg-zinc-800"><X size={14} /></button>
+            </AlertAction>
+          </Alert>
+        </div>
+      )}
 
       {/* TOP HEADER */}
       <header className="flex items-center justify-between h-12 px-3 border-b border-zinc-900 bg-[#0d0d0d] shrink-0 z-20 shadow-sm">
@@ -504,7 +549,8 @@ export default function MipsEmulatorPage() {
               <Menu className="w-5 h-5"/>
             </SheetTrigger>
             <SheetContent side="left" className="p-0 bg-[#09090b] border-r-zinc-800 w-[280px] flex flex-col h-full overflow-hidden [&>button]:text-zinc-400 [&>button]:z-50">
-               <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} />
+               {/* 1. PEMANGGILAN FILE EXPLORER DI HEADER MOBILE */}
+               <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} triggerAlert={triggerAlert} />
             </SheetContent>
           </Sheet>
 
@@ -522,6 +568,36 @@ export default function MipsEmulatorPage() {
 
         {/* Action Controls Desktop */}
         <div className="hidden md:flex items-center gap-2">
+           
+           {/* SHADCN SETTINGS SHEET */}
+           <Sheet>
+             <SheetTrigger className="inline-flex items-center px-3 h-7 text-xs text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors border border-transparent hover:border-zinc-800 cursor-pointer">
+                 <Settings2 className="w-3.5 h-3.5 mr-1" /> Settings
+             </SheetTrigger>
+             <SheetContent className="bg-[#09090b] border-l border-zinc-800 text-zinc-300 w-[350px] sm:w-[400px] overflow-y-auto z-[110]">
+                <div className="p-6">
+                  <FieldSet>
+                    <FieldLegend className="text-emerald-500 font-bold text-lg mb-2">Emulator Configuration</FieldLegend>
+                    <FieldDescription className="mb-8 text-zinc-400 text-xs leading-relaxed">
+                      Customize the behavior of the MIPS Processor and IDE workspace.
+                    </FieldDescription>
+                    
+                    <FieldGroup className="flex flex-col gap-6">
+                      <Field>
+                        <FieldLabel className="text-zinc-300 font-semibold mb-2 block">Cycles per Step</FieldLabel>
+                        <Input type="number" defaultValue={500} className="bg-[#121214] border-zinc-800 font-mono text-emerald-400 focus-visible:ring-emerald-500" />
+                        <FieldDescription className="text-xs text-zinc-500 mt-2">
+                          Limit instructions executed per browser frame to prevent infinite loop crashes.
+                        </FieldDescription>
+                      </Field>
+                    </FieldGroup>
+                  </FieldSet>
+                </div>
+             </SheetContent>
+           </Sheet>
+
+           <div className="h-4 w-px bg-zinc-800 mx-1"></div>
+
            <div className="flex items-center gap-1 border-r border-zinc-800 pr-3 mr-1">
              <Button variant="ghost" size="sm" className="h-7 text-xs text-zinc-400 hover:text-white" onClick={handleResetCPU} title="Reset CPU"><RotateCcw className="w-3.5 h-3.5 mr-1"/> CPU</Button>
              <Button variant="ghost" size="sm" className="h-7 text-xs text-red-400 hover:bg-red-500/10" onClick={handleResetAll} title="Hard Reset"><AlertTriangle className="w-3.5 h-3.5 mr-1"/> Reset</Button>
@@ -546,10 +622,7 @@ export default function MipsEmulatorPage() {
       </header>
 
       {/* TABS HEADER GLOBAL */}
-      <div 
-        className="flex items-center px-2 pt-2 bg-[#09090b] border-b border-zinc-900 shrink-0 overflow-x-auto hide-scrollbar z-10 shadow-sm w-full touch-pan-x" 
-        style={{ WebkitOverflowScrolling: 'touch' }}
-      >
+      <div className="flex items-center px-2 pt-2 bg-[#09090b] border-b border-zinc-900 shrink-0 overflow-x-auto hide-scrollbar z-10 shadow-sm w-full touch-pan-x" style={{ WebkitOverflowScrolling: 'touch' }}>
         <button onClick={() => setActiveTab('code')} className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'code' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
           <Code2 className="w-3.5 h-3.5 mr-2" /> Code
         </button>
@@ -571,27 +644,15 @@ export default function MipsEmulatorPage() {
 
       {/* MAIN WORKSPACE (Native Resizer untuk Desktop / Flex untuk Mobile) */}
       {isMobile ? (
-        // ======================= LAYOUT MOBILE (FLEXBOX MURNI) =======================
         <div className="flex-1 flex flex-col md:flex-row min-w-0 h-full">
           {/* MOBILE CENTER PANEL */}
           <div className={`flex-1 flex-col min-w-0 h-full ${activeTab === 'terminal' ? 'hidden' : 'flex'}`}>
-            
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] relative ${activeTab === 'code' ? 'flex' : 'hidden'}`}>
-              
-              {/* TABS FILE UNTUK MOBILE */}
-              <div 
-                className="flex items-center bg-[#09090b] border-b border-zinc-800 overflow-x-auto shrink-0 hide-scrollbar w-full touch-pan-x" 
-                style={{ WebkitOverflowScrolling: 'touch' }}
-              >
+              <div className="flex items-center bg-[#09090b] border-b border-zinc-800 overflow-x-auto shrink-0 hide-scrollbar w-full touch-pan-x" style={{ WebkitOverflowScrolling: 'touch' }}>
                 {openTabs.map(file => (
                   <div 
-                    key={file} 
-                    onClick={() => setActiveFile(file)} 
-                    // Event Drag Drop ditambahkan di sini
-                    draggable
-                    onDragStart={(e) => handleTabDragStart(e, file)}
-                    onDragOver={handleTabDragOver}
-                    onDrop={(e) => handleTabDrop(e, file)}
+                    key={file} onClick={() => setActiveFile(file)} draggable
+                    onDragStart={(e) => handleTabDragStart(e, file)} onDragOver={handleTabDragOver} onDrop={(e) => handleTabDrop(e, file)}
                     className={`group flex items-center gap-2 px-4 py-2 cursor-pointer border-r border-zinc-800 border-b-2 text-sm transition-colors min-w-max shrink-0 select-none ${activeFile === file ? 'border-b-emerald-500 bg-[#1e1e1e] text-emerald-400' : 'border-b-transparent bg-[#09090b] text-zinc-500 hover:bg-[#18181b]'}`}
                   >
                     <FileIcon size={14} className={activeFile === file ? "text-emerald-500" : "text-zinc-500"} />
@@ -600,8 +661,6 @@ export default function MipsEmulatorPage() {
                   </div>
                 ))}
               </div>
-
-              {/* EDITOR VIEW */}
               <div className="flex-1 relative">
                 <div className="absolute inset-0">
                   {activeFile ? (
@@ -623,7 +682,6 @@ export default function MipsEmulatorPage() {
               <RegistersView regValues={regValues} />
             </div>
           </div>
-
           {/* MOBILE TERMINAL PANEL */}
           <div className={`w-full border-l border-zinc-900 bg-[#0a0a0a] flex-col shrink-0 min-h-0 ${activeTab !== 'terminal' ? 'hidden' : 'flex'}`}>
              <TerminalView cpu={cpuInstance.current} activeTab={activeTab} isMobile={isMobile} syncUI={syncUI} setIsRunning={setIsRunning} requestCycle={() => requestAnimationFrame(executeCycle)} />
@@ -635,36 +693,21 @@ export default function MipsEmulatorPage() {
         <div className="flex-1 flex flex-row w-full min-h-0 bg-[#0d0d0d]">
           
           {/* PC PANEL 1: SIDEBAR (File Explorer) */}
-          <div 
-            style={{ width: sidebarWidth, minWidth: '150px' }} 
-            className="hidden md:flex flex-col bg-[#09090b] border-r border-zinc-900 shrink-0"
-          >
-            <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} />
+          <div style={{ width: sidebarWidth, flexShrink: 0 }} className="hidden md:flex flex-col bg-[#09090b] border-r border-zinc-900 overflow-hidden">
+             {/* 2. PEMANGGILAN FILE EXPLORER DI SIDEBAR DESKTOP */}
+            <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} triggerAlert={triggerAlert} />
           </div>
 
-          {/* RESIZER 1 */}
-          <div 
-            onMouseDown={startResizingSidebar} 
-            className="hidden md:block w-1.5 bg-zinc-900 hover:bg-emerald-500 cursor-col-resize z-10 shrink-0 transition-colors" 
-          />
+          <div onMouseDown={startResizingSidebar} className="hidden md:block w-1.5 bg-zinc-900 hover:bg-emerald-500 cursor-col-resize z-10 shrink-0 transition-colors" />
 
           {/* PC PANEL 2: CENTER WORKSPACE */}
           <div className="flex-1 flex flex-col min-w-0 h-full relative">
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] relative ${activeTab === 'code' ? 'flex' : 'hidden'}`}>
-              
-              {/* TABS FILE UNTUK DESKTOP (Dengan Drag & Drop) */}
-              <div 
-                className="flex items-center bg-[#09090b] border-b border-zinc-800 overflow-x-auto shrink-0 hide-scrollbar w-full"
-              >
+              <div className="flex items-center bg-[#09090b] border-b border-zinc-800 overflow-x-auto shrink-0 hide-scrollbar w-full">
                 {openTabs.map(file => (
                   <div 
-                    key={file} 
-                    onClick={() => setActiveFile(file)} 
-                    // Event Drag Drop ditambahkan di sini
-                    draggable
-                    onDragStart={(e) => handleTabDragStart(e, file)}
-                    onDragOver={handleTabDragOver}
-                    onDrop={(e) => handleTabDrop(e, file)}
+                    key={file} onClick={() => setActiveFile(file)} draggable
+                    onDragStart={(e) => handleTabDragStart(e, file)} onDragOver={handleTabDragOver} onDrop={(e) => handleTabDrop(e, file)}
                     className={`group flex items-center gap-2 px-4 py-2 cursor-pointer border-r border-zinc-800 border-b-2 text-sm transition-colors min-w-max shrink-0 select-none ${activeFile === file ? 'border-b-emerald-500 bg-[#1e1e1e] text-emerald-400' : 'border-b-transparent bg-[#09090b] text-zinc-500 hover:bg-[#18181b]'}`}
                   >
                     <FileIcon size={14} className={activeFile === file ? "text-emerald-500" : "text-zinc-500"} />
@@ -673,8 +716,6 @@ export default function MipsEmulatorPage() {
                   </div>
                 ))}
               </div>
-
-              {/* EDITOR VIEW */}
               <div className="flex-1 relative">
                 <div className="absolute inset-0">
                   {activeFile ? (
@@ -697,17 +738,10 @@ export default function MipsEmulatorPage() {
             </div>
           </div>
 
-          {/* RESIZER 2 (Hanya muncul jika Terminal terbuka) */}
-          <div 
-            onMouseDown={startResizingTerminal} 
-            className={`hidden md:block w-1.5 bg-zinc-900 hover:bg-emerald-500 cursor-col-resize z-10 shrink-0 transition-colors ${activeTab !== 'terminal' && !isMobile ? '' : 'hidden'}`} 
-          />
+          <div onMouseDown={startResizingTerminal} className={`hidden md:block w-1.5 bg-zinc-900 hover:bg-emerald-500 cursor-col-resize z-10 shrink-0 transition-colors ${activeTab !== 'terminal' && !isMobile ? '' : 'hidden'}`} />
 
           {/* PC PANEL 3: TERMINAL */}
-          <div 
-            style={{ width: terminalWidth, minWidth: '250px' }} 
-            className={`flex-col bg-[#0a0a0a] border-l border-zinc-900 shrink-0 min-h-0 ${activeTab !== 'terminal' && !isMobile ? 'flex' : 'hidden'}`}
-          >
+          <div style={{ width: terminalWidth, flexShrink: 0 }} className={`flex-col bg-[#0a0a0a] border-l border-zinc-900 overflow-hidden min-h-0 ${activeTab !== 'terminal' && !isMobile ? 'flex' : 'hidden'}`}>
              <TerminalView cpu={cpuInstance.current} activeTab={activeTab} isMobile={isMobile} syncUI={syncUI} setIsRunning={setIsRunning} requestCycle={() => requestAnimationFrame(executeCycle)} />
           </div>
 
@@ -731,7 +765,8 @@ export default function MipsEmulatorPage() {
               <FolderCode className="w-4 h-4" /> <span className="text-[10px] font-bold">Files</span>
             </SheetTrigger>
             <SheetContent side="left" className="p-0 bg-[#09090b] border-r-zinc-800 w-[280px] flex flex-col h-full overflow-hidden [&>button]:text-zinc-400 [&>button]:z-50">
-               <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} />
+               {/* 3. PEMANGGILAN FILE EXPLORER DI BOTTOM BAR MOBILE */}
+               <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} triggerAlert={triggerAlert} />
             </SheetContent>
           </Sheet>
         </div>

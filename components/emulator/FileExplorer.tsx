@@ -1,5 +1,15 @@
 import React, { useState } from 'react';
 import { ChevronRight, ChevronDown, Folder as FolderIcon, File as FileIcon, Trash2, X, FilePlus, FolderPlus, FolderInput, ArrowRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 interface FileExplorerProps {
   files: string[];
@@ -8,26 +18,32 @@ interface FileExplorerProps {
   setActiveFile: (file: string) => void;
   fileContents: Record<string, string>;
   setFileContents: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  triggerAlert: (title: string, message: string, variant: "default" | "destructive") => void; // Prop Baru!
 }
 
 export function FileExplorer({
-  files, setFiles, activeFile, setActiveFile, fileContents, setFileContents
+  files, setFiles, activeFile, setActiveFile, fileContents, setFileContents, triggerAlert
 }: FileExplorerProps) {
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
+  const [selectedFolder, setSelectedFolder] = useState('');
+
+  // States untuk Modal "Add New" (Card)
   const [showNewModal, setShowNewModal] = useState(false);
   const [modalType, setModalType] = useState<'file' | 'folder'>('file');
   const [newItemName, setNewItemName] = useState('');
-  const [selectedFolder, setSelectedFolder] = useState('');
 
-  // Drag & Drop Feedback State (Untuk Desktop)
-  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
-
-  // State Khusus Mobile: Modal Pindah File (Move To...)
+  // States untuk Modal "Move To" (Card)
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [itemToMove, setItemToMove] = useState<string | null>(null);
 
+  // States untuk Modal "Delete" (Card)
+  const [itemToDelete, setItemToDelete] = useState<string | null>(null);
+
+  // Drag & Drop Feedback State (Desktop)
+  const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+
   // =======================================================================
-  // DRAG AND DROP LOGIC (HTML5 NATIVE - DESKTOP)
+  // LOGIKA DRAG AND DROP (DESKTOP)
   // =======================================================================
   const handleDragStart = (e: React.DragEvent, sourcePath: string) => {
     e.dataTransfer.setData('text/plain', sourcePath);
@@ -39,9 +55,7 @@ export function FileExplorer({
     e.preventDefault(); 
     e.dataTransfer.dropEffect = 'move';
     e.stopPropagation();
-    if (dragOverFolder !== targetFolder) {
-      setDragOverFolder(targetFolder);
-    }
+    if (dragOverFolder !== targetFolder) setDragOverFolder(targetFolder);
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
@@ -59,14 +73,13 @@ export function FileExplorer({
   };
 
   // =======================================================================
-  // LOGIKA PEMINDAHAN INTI (Dipakai oleh Desktop Drag-Drop & Mobile Modal)
+  // LOGIKA PEMINDAHAN (Dipakai Desktop Drag-Drop & Mobile Card)
   // =======================================================================
   const moveItem = (sourcePath: string, targetFolder: string) => {
     if (!sourcePath || sourcePath === targetFolder) return;
     
-    // Cegah folder masuk ke dirinya sendiri
     if (targetFolder === sourcePath || targetFolder.startsWith(sourcePath + '/')) {
-      alert("Error: Tidak bisa memindahkan folder ke dalam dirinya sendiri!");
+      triggerAlert("Action Failed", "Cannot move a folder into itself.", "destructive");
       return;
     }
 
@@ -74,7 +87,7 @@ export function FileExplorer({
     const newPath = targetFolder === '' ? itemName : `${targetFolder}/${itemName}`;
     
     if (files.some(f => f === newPath || f.startsWith(newPath + '/'))) {
-      alert("Error: Item dengan nama yang sama sudah ada di tujuan!");
+      triggerAlert("Conflict", "An item with the same name already exists in the destination.", "destructive");
       return;
     }
 
@@ -105,29 +118,26 @@ export function FileExplorer({
     setFileContents(newContents);
     setActiveFile(updatedActiveFile);
     
-    // Tutup modal jika pemindahan dipicu dari Mobile
     setShowMoveModal(false);
     setItemToMove(null);
+    triggerAlert("Moved", `Successfully moved ${itemName}.`, "default");
   };
 
   // =======================================================================
-  // FILE & FOLDER CREATION LOGIC
+  // LOGIKA PEMBUATAN & PENGHAPUSAN
   // =======================================================================
   const handleCreateNewItem = (e?: React.FormEvent | React.KeyboardEvent) => {
-    if (e) {
-      e.preventDefault();
-    }
+    if (e) e.preventDefault();
 
     const rawName = newItemName.trim();
     if (!rawName) return;
     
     let fullPath = selectedFolder ? `${selectedFolder}/${rawName}` : rawName;
-    
     if (modalType === 'file' && !fullPath.endsWith('.s')) fullPath += '.s';
     if (modalType === 'folder') fullPath += '/.keep'; 
 
     if (files.includes(fullPath)) {
-      alert("Item tersebut sudah ada!");
+      triggerAlert("Duplicate Name", "File or folder already exists.", "destructive");
       return;
     }
 
@@ -141,31 +151,33 @@ export function FileExplorer({
     
     setShowNewModal(false);
     setNewItemName('');
+    triggerAlert("Created", `${fullPath.replace('/.keep', '')} was successfully created.`, "default");
   };
 
-  const deleteFile = (filename: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (files.length === 1 && files[0] === filename) return alert("File terakhir tidak bisa dihapus.");
+  const confirmDelete = () => {
+    if (!itemToDelete) return;
+    const filename = itemToDelete;
+
+    const newFiles = files.filter(f => f !== filename && !f.startsWith(filename + '/'));
+    const newContents = { ...fileContents };
     
-    if (confirm(`Yakin ingin menghapus ${filename}?`)) {
-      const newFiles = files.filter(f => f !== filename && !f.startsWith(filename + '/'));
-      const newContents = { ...fileContents };
-      
-      files.forEach(f => {
-        if (f === filename || f.startsWith(filename + '/')) {
-            delete newContents[f];
-            localStorage.removeItem(`mips_fs_${f}`);
-        }
-      });
-      
-      setFiles(newFiles);
-      setFileContents(newContents);
-      
-      if (activeFile === filename || activeFile.startsWith(filename + '/')) {
-        const remainingFiles = newFiles.filter(f => !f.endsWith('.keep'));
-        setActiveFile(remainingFiles.length > 0 ? remainingFiles[0] : '');
+    files.forEach(f => {
+      if (f === filename || f.startsWith(filename + '/')) {
+          delete newContents[f];
+          localStorage.removeItem(`mips_fs_${f}`);
       }
+    });
+    
+    setFiles(newFiles);
+    setFileContents(newContents);
+    
+    if (activeFile === filename || activeFile.startsWith(filename + '/')) {
+      const remainingFiles = newFiles.filter(f => !f.endsWith('.keep'));
+      setActiveFile(remainingFiles.length > 0 ? remainingFiles[0] : '');
     }
+
+    setItemToDelete(null);
+    triggerAlert("Deleted", `${filename.split('/').pop()} has been deleted.`, "default");
   };
 
   const toggleFolder = (folderPath: string, e: React.MouseEvent) => {
@@ -178,7 +190,7 @@ export function FileExplorer({
   };
 
   // =======================================================================
-  // ALGORITMA REKURSIF YANG DISEMPURNAKAN (ANTI-BUG)
+  // RENDER POHON DIREKTORI
   // =======================================================================
   const renderFileTree = (currentPath: string, level: number = 0) => {
     const immediateFolders = new Set<string>();
@@ -189,11 +201,8 @@ export function FileExplorer({
       if (f.startsWith(prefix)) {
         const relativePath = f.substring(prefix.length);
         const parts = relativePath.split('/');
-        
         if (parts.length === 1) {
-          if (parts[0] !== '.keep') {
-            immediateFiles.add(f);
-          }
+          if (parts[0] !== '.keep') immediateFiles.add(f);
         } else {
           immediateFolders.add(prefix + parts[0]);
         }
@@ -205,13 +214,10 @@ export function FileExplorer({
 
     return (
       <div className="flex flex-col w-full" style={{ paddingLeft: level === 0 ? '0' : '14px' }}>
-        
-        {/* RENDER FOLDERS */}
         {sortedFolders.map(folder => {
           const folderName = folder.split('/').pop();
           const isExpanded = expandedFolders.has(folder);
           const isDragOver = dragOverFolder === folder;
-          
           return (
             <div key={folder} className="flex flex-col w-full relative">
               <div 
@@ -220,9 +226,7 @@ export function FileExplorer({
                 onDragOver={(e) => handleDragOver(e, folder)}
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => handleDrop(e, folder)}
-                className={`group flex items-center justify-between px-2 py-1.5 cursor-pointer transition-colors ${
-                  isDragOver ? 'bg-emerald-500/20 ring-1 ring-emerald-500 rounded' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
-                }`}
+                className={`group flex items-center justify-between px-2 py-1.5 cursor-pointer transition-colors ${isDragOver ? 'bg-emerald-500/20 ring-1 ring-emerald-500 rounded' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
                 onClick={(e) => toggleFolder(folder, e)}
               >
                 <div className="flex items-center gap-1.5 overflow-hidden">
@@ -230,13 +234,11 @@ export function FileExplorer({
                   <FolderIcon size={14} className="text-blue-400 shrink-0" />
                   <span className="text-sm truncate select-none">{folderName}</span>
                 </div>
-                
-                {/* ACTION BUTTONS (MOBILE FRIENDLY) */}
                 <div className="flex items-center gap-0.5 opacity-80 md:opacity-0 md:group-hover:opacity-100 bg-[#09090b] pl-2 shrink-0">
-                  <button onClick={(e) => { e.stopPropagation(); setItemToMove(folder); setShowMoveModal(true); }} className="hover:text-blue-400 p-1" title="Pindahkan"><FolderInput size={13}/></button>
+                  <button onClick={(e) => { e.stopPropagation(); setItemToMove(folder); setShowMoveModal(true); }} className="hover:text-blue-400 p-1" title="Move Folder"><FolderInput size={13}/></button>
                   <button onClick={(e) => { e.stopPropagation(); setSelectedFolder(folder); setModalType('file'); setShowNewModal(true); }} className="hover:text-emerald-400 p-1" title="New File"><FilePlus size={13}/></button>
                   <button onClick={(e) => { e.stopPropagation(); setSelectedFolder(folder); setModalType('folder'); setShowNewModal(true); }} className="hover:text-emerald-400 p-1" title="New Folder"><FolderPlus size={13}/></button>
-                  <button onClick={(e) => deleteFile(folder, e)} className="hover:text-red-400 p-1" title="Hapus"><Trash2 size={13}/></button>
+                  <button onClick={(e) => { e.stopPropagation(); setItemToDelete(folder); }} className="hover:text-red-400 p-1" title="Delete Folder"><Trash2 size={13}/></button>
                 </div>
               </div>
               {isExpanded && renderFileTree(folder, level + 1)}
@@ -244,7 +246,6 @@ export function FileExplorer({
           );
         })}
         
-        {/* RENDER FILES */}
         {sortedFiles.map(file => {
           const fileName = file.split('/').pop();
           const isActive = activeFile === file;
@@ -254,19 +255,19 @@ export function FileExplorer({
               draggable
               onDragStart={(e) => handleDragStart(e, file)}
               onClick={() => setActiveFile(file)}
-              className={`group flex items-center justify-between px-2 py-1.5 cursor-pointer transition-colors ${
-                isActive ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'
-              }`}
+              className={`group flex items-center justify-between px-2 py-1.5 cursor-pointer transition-colors ${isActive ? 'bg-emerald-500/10 text-emerald-400' : 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200'}`}
             >
               <div className="flex items-center gap-1.5 overflow-hidden pl-5">
                 <FileIcon size={13} className={`shrink-0 ${isActive ? "text-emerald-500" : "text-zinc-500"}`} />
                 <span className="text-sm truncate select-none">{fileName}</span>
               </div>
-
-              {/* ACTION BUTTONS (MOBILE FRIENDLY) */}
               <div className="flex items-center gap-0.5 opacity-80 md:opacity-0 md:group-hover:opacity-100 bg-[#09090b] pl-2 shrink-0">
-                <button onClick={(e) => { e.stopPropagation(); setItemToMove(file); setShowMoveModal(true); }} className="hover:text-blue-400 p-1" title="Pindahkan File"><FolderInput size={13}/></button>
-                <button onClick={(e) => deleteFile(file, e)} className="hover:text-red-400 p-1" title="Hapus File"><Trash2 size={13}/></button>
+                <button onClick={(e) => { e.stopPropagation(); setItemToMove(file); setShowMoveModal(true); }} className="hover:text-blue-400 p-1" title="Move File"><FolderInput size={13}/></button>
+                <button onClick={(e) => { 
+                  e.stopPropagation(); 
+                  if (files.length === 1 && files[0] === file) triggerAlert("Error", "Cannot delete the last remaining file.", "destructive");
+                  else setItemToDelete(file); 
+                }} className="hover:text-red-400 p-1" title="Delete File"><Trash2 size={13}/></button>
               </div>
             </div>
           );
@@ -275,95 +276,116 @@ export function FileExplorer({
     );
   };
 
-  // Kumpulkan daftar semua folder untuk modal "Move To..."
   const allFolders = Array.from(new Set(
     files.map(f => {
       const parts = f.split('/');
-      parts.pop(); // Hapus nama file atau .keep
+      parts.pop(); 
       return parts.join('/');
     }).filter(Boolean)
   )).sort();
 
   return (
     <>
-      {/* 1. OVERLAY MODAL CUSTOM (NEW ITEM) */}
+      {/* 1. MODAL (SHADCN CARD) UNTUK NEW ITEM */}
       {showNewModal && (
-        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowNewModal(false)}>
-          <div className="bg-[#121214] border border-zinc-800 rounded-lg shadow-xl p-4 w-full max-w-sm" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-semibold text-zinc-200">New {modalType === 'file' ? 'File' : 'Folder'}</h3>
-              <button onClick={() => setShowNewModal(false)} className="text-zinc-500 hover:text-zinc-300"><X size={16}/></button>
-            </div>
-            
-            <form onSubmit={handleCreateNewItem} className="flex flex-col gap-3">
-              {selectedFolder && <span className="text-xs text-zinc-500 font-mono">Location: {selectedFolder}/</span>}
-              <input 
-                autoFocus
-                type="text" 
-                placeholder={modalType === 'file' ? "math.s" : "core"}
-                value={newItemName}
-                onChange={(e) => setNewItemName(e.target.value)}
-                className="w-full bg-[#0a0a0a] border border-zinc-700 rounded px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500 font-mono"
-              />
-              <button type="submit" className="bg-emerald-600 hover:bg-emerald-500 text-white w-full rounded py-2 font-medium text-sm transition-colors">
-                Create
-              </button>
-            </form>
-          </div>
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in" onClick={() => setShowNewModal(false)}>
+          <Card className="w-full max-w-sm bg-[#121214] border-zinc-800 text-zinc-200 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <CardHeader className="pb-3 border-b border-zinc-800/50">
+              <div className="flex justify-between items-start">
+                <div>
+                  <CardTitle className="text-lg">Create New {modalType === 'file' ? 'File' : 'Folder'}</CardTitle>
+                  <CardDescription className="text-zinc-500 mt-1">
+                    {selectedFolder ? `Location: ${selectedFolder}/` : 'Location: / (Root)'}
+                  </CardDescription>
+                </div>
+                <button onClick={() => setShowNewModal(false)} className="text-zinc-500 hover:text-zinc-300 bg-zinc-900/50 p-1 rounded-full"><X size={16}/></button>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <form onSubmit={handleCreateNewItem} className="flex flex-col gap-4">
+                <Input autoFocus type="text" placeholder={modalType === 'file' ? "utils.s" : "core"} value={newItemName} onChange={(e) => setNewItemName(e.target.value)} className="w-full bg-[#0a0a0a] border border-zinc-700 focus-visible:ring-emerald-500 font-mono" />
+                <Button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white shadow-md">Create {modalType === 'file' ? 'File' : 'Folder'}</Button>
+              </form>
+            </CardContent>
+          </Card>
         </div>
       )}
 
-      {/* 2. OVERLAY MODAL PEMINDAHAN (MOVE TO) */}
+      {/* 2. MODAL (SHADCN CARD) UNTUK MOVE TO */}
       {showMoveModal && itemToMove && (
-        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm" onClick={() => setShowMoveModal(false)}>
-          <div className="bg-[#121214] border border-zinc-800 rounded-lg shadow-xl p-4 w-full max-w-sm" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="font-semibold text-zinc-200 text-sm">Pindahkan: <span className="text-emerald-400 font-mono">{itemToMove.split('/').pop()}</span></h3>
-              <button onClick={() => setShowMoveModal(false)} className="text-zinc-500 hover:text-zinc-300"><X size={16}/></button>
-            </div>
-            <p className="text-xs text-zinc-400 mb-3">Pilih tujuan pemindahan:</p>
-            
-            <div className="flex flex-col gap-1 max-h-48 overflow-y-auto mb-3 custom-scrollbar border border-zinc-800 rounded p-1 bg-[#0a0a0a]">
-              {/* Opsi Ke Root (Luar Folder) */}
-              <button 
-                onClick={() => moveItem(itemToMove, '')}
-                className="flex items-center justify-between w-full px-3 py-2 text-xs text-left text-zinc-300 hover:bg-zinc-800 rounded transition-colors"
-              >
-                <span className="font-mono text-zinc-400">/ (Root Utama)</span>
-                <ArrowRight size={14} className="text-emerald-500" />
-              </button>
-
-              {/* Daftar Folder Tujuan */}
-              {allFolders.map(folder => (
-                <button 
-                  key={folder}
-                  onClick={() => moveItem(itemToMove, folder)}
-                  className="flex items-center justify-between w-full px-3 py-2 text-xs text-left text-zinc-300 hover:bg-zinc-800 rounded transition-colors"
-                >
-                  <span className="font-mono text-blue-400">{folder}/</span>
-                  <ArrowRight size={14} className="text-emerald-500" />
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in" onClick={() => setShowMoveModal(false)}>
+          <Card className="w-full max-w-sm bg-[#121214] border-zinc-800 text-zinc-200 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <CardHeader className="pb-3 border-b border-zinc-800/50">
+              <div className="flex justify-between items-start">
+                <div>
+                  <CardTitle className="text-lg">Move Item</CardTitle>
+                  <CardDescription className="text-zinc-500 mt-1 break-all">
+                    Moving <span className="text-emerald-400 font-mono">{itemToMove.split('/').pop()}</span>
+                  </CardDescription>
+                </div>
+                <button onClick={() => setShowMoveModal(false)} className="text-zinc-500 hover:text-zinc-300 bg-zinc-900/50 p-1 rounded-full"><X size={16}/></button>
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <div className="flex flex-col gap-1 max-h-48 overflow-y-auto custom-scrollbar border border-zinc-800/50 rounded-md p-1 bg-[#0a0a0a]">
+                <button onClick={() => moveItem(itemToMove, '')} className="flex items-center justify-between w-full px-3 py-2.5 text-xs text-left text-zinc-300 hover:bg-zinc-800 rounded transition-colors group">
+                  <span className="font-mono text-zinc-400 font-semibold">/ (Root)</span>
+                  <ArrowRight size={14} className="text-zinc-600 group-hover:text-emerald-500 transition-colors" />
                 </button>
-              ))}
-            </div>
-            <button onClick={() => setShowMoveModal(false)} className="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded py-1.5 text-xs font-medium transition-colors">
-              Batal
-            </button>
-          </div>
+                {allFolders.map(folder => (
+                  <button key={folder} onClick={() => moveItem(itemToMove, folder)} className="flex items-center justify-between w-full px-3 py-2.5 text-xs text-left text-zinc-300 hover:bg-zinc-800 rounded transition-colors group">
+                    <span className="font-mono text-blue-400">{folder}/</span>
+                    <ArrowRight size={14} className="text-zinc-600 group-hover:text-emerald-500 transition-colors" />
+                  </button>
+                ))}
+              </div>
+            </CardContent>
+            <CardFooter>
+              <Button variant="outline" onClick={() => setShowMoveModal(false)} className="w-full border-zinc-700 text-zinc-300 hover:bg-zinc-800">Cancel</Button>
+            </CardFooter>
+          </Card>
+        </div>
+      )}
+
+      {/* 3. MODAL (SHADCN CARD) UNTUK DELETE CONFIRMATION */}
+      {itemToDelete && (
+        <div className="fixed inset-0 bg-black/60 z-[100] flex items-center justify-center p-4 backdrop-blur-sm animate-in zoom-in-95" onClick={() => setItemToDelete(null)}>
+          <Card className="w-full max-w-sm bg-[#121214] border-red-900/30 text-zinc-200 shadow-2xl" onClick={e => e.stopPropagation()}>
+            <CardHeader>
+              <CardTitle className="text-red-400 flex items-center gap-2">
+                <Trash2 size={20} /> Confirm Deletion
+              </CardTitle>
+              <CardDescription className="text-zinc-400 text-sm leading-relaxed mt-2">
+                Are you sure you want to delete <span className="text-zinc-100 font-mono bg-zinc-800 px-1 py-0.5 rounded">{itemToDelete.split('/').pop()}</span>? 
+                <br/>This action cannot be undone.
+              </CardDescription>
+            </CardHeader>
+            <CardFooter className="flex justify-end gap-3 pt-2 bg-transparent border-none pb-4">
+              <Button 
+                variant="outline" 
+                className="bg-transparent border-zinc-700 text-zinc-300 hover:bg-zinc-800 hover:text-white" 
+                onClick={() => setItemToDelete(null)}
+              >
+                Cancel
+              </Button>
+              <Button 
+                className="bg-red-600 hover:bg-red-700 text-white border-none" 
+                onClick={confirmDelete}
+              >
+                Delete Permanently
+              </Button>
+            </CardFooter>
+          </Card>
         </div>
       )}
 
       {/* CONTAINER EXPLORER */}
-      <div 
-        className="flex flex-col h-full w-full bg-[#09090b]"
-        onDragOver={(e) => handleDragOver(e, '')}
-        onDragLeave={handleDragLeave}
-        onDrop={(e) => handleDrop(e, '')}
-      >
-        <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-900 shrink-0">
+      <div className="flex flex-col h-full w-full bg-[#09090b]" onDragOver={(e) => handleDragOver(e, '')} onDragLeave={handleDragLeave} onDrop={(e) => handleDrop(e, '')}>
+        <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-900 shrink-0 bg-[#0d0d0d]">
           <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Explorer</span>
           <div className="flex gap-1 text-zinc-400">
-            <button onClick={() => { setSelectedFolder(''); setModalType('file'); setShowNewModal(true); }} className="hover:text-emerald-400 p-1 rounded transition-colors" title="New File (Root)"><FilePlus size={15} /></button>
-            <button onClick={() => { setSelectedFolder(''); setModalType('folder'); setShowNewModal(true); }} className="hover:text-emerald-400 p-1 rounded transition-colors" title="New Folder (Root)"><FolderPlus size={15} /></button>
+            <button onClick={() => { setSelectedFolder(''); setModalType('file'); setShowNewModal(true); }} className="hover:text-emerald-400 p-1.5 rounded bg-zinc-900/50 hover:bg-zinc-800 transition-colors border border-zinc-800/50" title="New File in Root"><FilePlus size={14} /></button>
+            <button onClick={() => { setSelectedFolder(''); setModalType('folder'); setShowNewModal(true); }} className="hover:text-emerald-400 p-1.5 rounded bg-zinc-900/50 hover:bg-zinc-800 transition-colors border border-zinc-800/50" title="New Folder in Root"><FolderPlus size={14} /></button>
           </div>
         </div>
         <div className={`flex-1 overflow-y-auto py-2 custom-scrollbar ${dragOverFolder === '' ? 'bg-emerald-500/5' : ''}`}>
