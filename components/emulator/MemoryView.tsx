@@ -1,65 +1,127 @@
 import React from 'react';
-import { Button } from "@/components/ui/button";
-import { Search, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from "lucide-react";
+import { Search, ArrowUp, ArrowDown, ZoomIn, ZoomOut, Database } from 'lucide-react';
 
 interface MemoryViewProps {
   memoryDump: any[];
   memorySearchInput: string;
-  setMemorySearchInput: (val: string) => void;
-  handleSearchMemory: () => void;
+  setMemorySearchInput: React.Dispatch<React.SetStateAction<string>>;
+  handleSearchMemory: (overrideAddr?: any) => void; // Diubah menjadi 'any' agar aman dari error TS
   handlePageMemory: (offset: number) => void;
   viewFontSize: number;
-  setViewFontSize: (val: number) => void;
+  setViewFontSize: React.Dispatch<React.SetStateAction<number>>;
 }
 
-export function MemoryView({ memoryDump, memorySearchInput, setMemorySearchInput, handleSearchMemory, handlePageMemory, viewFontSize, setViewFontSize }: MemoryViewProps) {
+export function MemoryView({
+  memoryDump, memorySearchInput, setMemorySearchInput, handleSearchMemory, handlePageMemory, viewFontSize, setViewFontSize
+}: MemoryViewProps) {
+  
+  // Daftar Segmen Memori MIPS Standar
+  const segments = [
+    { label: '.text', addr: '00400000', color: 'text-blue-400' },
+    { label: '.data', addr: '10010000', color: 'text-emerald-400' },
+    { label: 'heap', addr: '10040000', color: 'text-yellow-400' },
+    { label: 'stack', addr: '7fffeff0', color: 'text-rose-400' }
+  ];
+
   return (
-    <div className="flex-1 m-0 flex flex-col bg-[#0d0d0d] overflow-hidden min-h-0 w-full h-full">
-      <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-900 bg-zinc-950 shrink-0">
-        <div className="flex items-center gap-1 md:gap-2">
-          <Search className="w-3.5 h-3.5 text-zinc-500 hidden md:block" />
-          <span className="text-zinc-500 font-mono text-[10px] md:hidden">0x</span>
-          <input type="text" value={memorySearchInput} onChange={(e) => setMemorySearchInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSearchMemory()} className="h-6 w-20 md:w-24 bg-transparent border-b border-zinc-700 px-1 text-xs font-mono text-zinc-300 outline-none focus:border-emerald-500 transition-colors" placeholder="00000000" />
-          <div className="flex items-center gap-0.5 ml-1">
-            <Button variant="outline" size="icon" className="h-6 w-6 bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white" onClick={() => handlePageMemory(-256)}><ChevronLeft className="w-3.5 h-3.5"/></Button>
-            <Button variant="outline" size="icon" className="h-6 w-6 bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white" onClick={() => handlePageMemory(256)}><ChevronRight className="w-3.5 h-3.5"/></Button>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 bg-zinc-900 rounded border border-zinc-800 p-0.5">
-          <Button variant="ghost" size="icon" className="h-5 w-5 text-zinc-400" onClick={() => setViewFontSize(Math.max(10, viewFontSize - 1))}><ZoomOut className="w-3 h-3"/></Button>
-          <span className="text-[10px] text-zinc-400 font-mono w-6 text-center">{viewFontSize}</span>
-          <Button variant="ghost" size="icon" className="h-5 w-5 text-zinc-400" onClick={() => setViewFontSize(Math.min(24, viewFontSize + 1))}><ZoomIn className="w-3 h-3"/></Button>
-        </div>
+    <div className="flex flex-col h-full w-full bg-[#0d0d0d] font-sans">
+      
+      {/* ===================================================================== */}
+      {/* TOOLBAR ATAS (Tombol Segment, Input Search, Pagination, Zoom)         */}
+      {/* ===================================================================== */}
+      <div className="flex flex-wrap items-center justify-between px-3 py-2 border-b border-zinc-800 bg-[#121214] gap-3 shrink-0">
+         
+         {/* KIRI: Tombol Pintas Segmen (Quick Jump) */}
+         <div className="flex items-center bg-[#09090b] p-1 rounded-md border border-zinc-800 overflow-x-auto hide-scrollbar">
+            <div className="px-2 flex items-center gap-1.5 border-r border-zinc-800 mr-1 shrink-0">
+              <Database size={13} className="text-zinc-500" />
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest hidden sm:inline">Jump</span>
+            </div>
+            {segments.map(seg => (
+              <button
+                key={seg.label}
+                type="button" // Memastikan tombol ini tidak submit form
+                onClick={() => {
+                  setMemorySearchInput(seg.addr);
+                  handleSearchMemory(seg.addr); // Lempar address langsung ke fungsi pencarian
+                }}
+                className={`px-2.5 py-1 text-xs font-mono font-medium rounded transition-colors hover:bg-zinc-800 ${seg.color} opacity-80 hover:opacity-100 shrink-0`}
+              >
+                {seg.label}
+              </button>
+            ))}
+         </div>
+
+         {/* KANAN: Kontrol Input, Paginasi & Zoom */}
+         <div className="flex items-center gap-2 ml-auto">
+            
+            {/* Input Manual Address */}
+            <form 
+              onSubmit={(e) => handleSearchMemory(e)} 
+              className="flex items-center bg-[#09090b] border border-zinc-800 rounded focus-within:border-emerald-500 focus-within:ring-1 focus-within:ring-emerald-500/20 transition-all overflow-hidden shrink-0"
+            >
+              <span className="text-zinc-500 pl-2 text-xs font-mono select-none">0x</span>
+              <input 
+                type="text"
+                value={memorySearchInput}
+                onChange={(e) => setMemorySearchInput(e.target.value)}
+                placeholder="address"
+                className="bg-transparent border-none focus:outline-none text-zinc-300 text-xs font-mono w-20 px-1 py-1.5"
+              />
+              <button type="submit" className="p-1.5 text-zinc-500 hover:text-emerald-400 hover:bg-zinc-800 transition-colors border-l border-zinc-800" title="Go / Enter">
+                <Search size={13} />
+              </button>
+            </form>
+
+            {/* Tombol Paginasi (-0x100 dan +0x100) */}
+            <div className="flex items-center bg-[#09090b] border border-zinc-800 rounded overflow-hidden shrink-0">
+              <button onClick={() => handlePageMemory(-0x100)} className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition-colors" title="Page Up (-0x100)">
+                <ArrowUp size={14} />
+              </button>
+              <button onClick={() => handlePageMemory(0x100)} className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition-colors border-l border-zinc-800" title="Page Down (+0x100)">
+                <ArrowDown size={14} />
+              </button>
+            </div>
+
+            {/* Tombol Zoom (Hanya PC) */}
+            <div className="hidden sm:flex items-center bg-[#09090b] border border-zinc-800 rounded overflow-hidden shrink-0">
+              <button onClick={() => setViewFontSize(Math.max(10, viewFontSize - 1))} className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition-colors" title="Zoom Out">
+                <ZoomOut size={14} />
+              </button>
+              <button onClick={() => setViewFontSize(Math.min(24, viewFontSize + 1))} className="p-1.5 text-zinc-400 hover:text-emerald-400 hover:bg-zinc-800 transition-colors border-l border-zinc-800" title="Zoom In">
+                <ZoomIn size={14} />
+              </button>
+            </div>
+         </div>
       </div>
-      {/* PENTING: overflow-y-auto */}
-      <div className="flex-1 overflow-y-auto relative min-h-0 w-full">
-        <table className="w-full text-left border-collapse min-w-[320px]">
-          <thead className="sticky top-0 bg-[#09090b]/95 backdrop-blur z-10 border-b border-zinc-900">
-            <tr>
-              <th className="px-3 py-1.5 text-[10px] md:text-[11px] font-semibold text-zinc-500 uppercase tracking-widest w-20 md:w-28">Address</th>
-              <th className="px-3 py-1.5 text-[10px] md:text-[11px] font-semibold text-zinc-500 uppercase tracking-widest border-l border-zinc-900">Hex Dump & ASCII</th>
-            </tr>
-          </thead>
-          <tbody className="font-mono" style={{ fontSize: `${viewFontSize}px` }}>
+
+      {/* ===================================================================== */}
+      {/* AREA MEMORY HEX DUMP                                                  */}
+      {/* ===================================================================== */}
+      <div className="flex-1 overflow-y-auto p-3 custom-scrollbar bg-[#0d0d0d]">
+         <div className="font-mono flex flex-col gap-1 w-max min-w-full" style={{ fontSize: `${viewFontSize}px` }}>
             {memoryDump.length === 0 ? (
-               <tr><td colSpan={2} className="p-8 text-center text-zinc-700 text-xs">Awaiting Compilation...</td></tr>
+              <div className="text-zinc-600 text-sm text-center mt-10">Memory is empty or not initialized.</div>
             ) : (
               memoryDump.map((row, idx) => (
-                <tr key={idx} className="border-b border-zinc-900/50 hover:bg-zinc-900/50">
-                  <td className="px-3 py-2 md:py-1.5 font-semibold text-zinc-500">{row.address}</td>
-                  <td className="px-3 py-2 md:py-1.5 border-l border-zinc-900/50 flex gap-4 md:gap-6 items-center overflow-x-auto hide-scrollbar">
-                    <span className="text-zinc-300 tracking-widest whitespace-nowrap">
-                      {row.words.map((w: string, i: number) => <span key={i} className={w === '00000000' ? 'text-zinc-700' : 'text-emerald-100'}>{w}{i < 3 ? '  ' : ''}</span>)}
-                    </span>
-                    <span className="font-bold tracking-widest border-l border-zinc-800 pl-3 md:pl-4 whitespace-nowrap">
-                      {row.ascii.split('').map((char: string, i: number) => <span key={i} className={char === '.' ? 'text-zinc-800' : 'text-zinc-400'}>{char}</span>)}
-                    </span>
-                  </td>
-                </tr>
+                <div key={idx} className="flex items-center gap-6 hover:bg-zinc-800/40 px-2 py-1 rounded transition-colors group">
+                   <span className="text-emerald-500 font-semibold select-none group-hover:text-emerald-400 transition-colors">
+                     0x{row.address}
+                   </span>
+                   <div className="flex gap-4 text-zinc-300">
+                     {row.words.map((word: string, wIdx: number) => (
+                       <span key={wIdx} className="hover:text-white cursor-text transition-colors">
+                         {word}
+                       </span>
+                     ))}
+                   </div>
+                   <span className="text-zinc-500 tracking-widest bg-zinc-900/50 px-2 py-0.5 rounded border border-zinc-800/50 select-none hidden sm:block">
+                     {row.ascii}
+                   </span>
+                </div>
               ))
             )}
-          </tbody>
-        </table>
+         </div>
       </div>
     </div>
   );

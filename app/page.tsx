@@ -30,65 +30,65 @@ import { FileExplorer } from '@/components/emulator/FileExplorer';
 // =======================================================================
 const EditorView = dynamic(
   () => import('@/components/emulator/EditorView').then(mod => mod.EditorView),
-  { ssr: false, loading: () => <div className="absolute inset-0 flex items-center justify-center bg-[#1e1e1e] text-zinc-600 text-xs font-mono">Menyiapkan Editor...</div> }
+  { ssr: false, loading: () => <div className="absolute inset-0 flex items-center justify-center bg-[#1e1e1e] text-zinc-600 text-xs font-mono">Preparing Editor...</div> }
 );
 
 const TerminalView = dynamic(
   () => import('@/components/emulator/TerminalView').then(mod => mod.TerminalView),
-  { ssr: false, loading: () => <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0a] text-zinc-600 text-xs font-mono">Menyiapkan Terminal...</div> }
+  { ssr: false, loading: () => <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0a] text-zinc-600 text-xs font-mono">Preparing Terminal...</div> }
 );
 
 // =======================================================================
-// TEMPLATE KODE UNTUK USER BARU (Mencontohkan fitur .include)
+// ENGLISH TEMPLATES FOR NEW USERS
 // =======================================================================
 const DEFAULT_MAIN_CODE = `# ==============================================================================
 # MIPS OS WEB IDE
-# Contoh: Entry Point & Multi-file support
+# Example: Entry Point & Multi-file support
 # ==============================================================================
 
 .include "utils/math.s"
 
 .data
-    hello: .asciiz "Halo dari MIPS OS!\\n"
-    hasil_msg: .asciiz "Hasil perhitungan 10 + 5 = "
+    hello: .asciiz "Hello from MIPS OS!\\n"
+    result_msg: .asciiz "Calculation result of 10 + 5 = "
 
 .text
 .globl main
 
 main:
-    # 1. Cetak String Halo
+    # 1. Print Hello String
     li $v0, 4
     la $a0, hello
     syscall
 
-    # 2. Siapkan parameter untuk fungsi tambah_angka (di utils/math.s)
+    # 2. Prepare parameters for add_numbers function (in utils/math.s)
     li $a0, 10
     li $a1, 5
-    jal tambah_angka
+    jal add_numbers
 
-    # 3. Simpan hasil kembalian ($v0) ke register temporary ($t0)
+    # 3. Save return value ($v0) to temporary register ($t0)
     move $t0, $v0
 
-    # 4. Cetak pesan hasil
+    # 4. Print result message
     li $v0, 4
-    la $a0, hasil_msg
+    la $a0, result_msg
     syscall
 
-    # 5. Cetak angka hasil (berada di $t0)
+    # 5. Print result number (in $t0)
     li $v0, 1
     move $a0, $t0
     syscall
 
-    # 6. Keluar program
+    # 6. Exit program
     li $v0, 10
     syscall
 `;
 
 const DEFAULT_MATH_CODE = `# File: utils/math.s
-# Fungsi-fungsi utilitas matematika
+# Math utility functions
 
-tambah_angka:
-    # Menambahkan $a0 dan $a1, mengembalikan hasil di $v0
+add_numbers:
+    # Adds $a0 and $a1, returns result in $v0
     add $v0, $a0, $a1
     jr $ra
 `;
@@ -141,7 +141,6 @@ export default function MipsEmulatorPage() {
   useEffect(() => {
     setIsMounted(true);
     
-    // Muat File dari LocalStorage
     const loadedFiles: string[] = [];
     const loadedContents: Record<string, string> = {};
     for (let i = 0; i < localStorage.length; i++) {
@@ -160,7 +159,6 @@ export default function MipsEmulatorPage() {
       setActiveFile(initialFile);
       setOpenTabs([initialFile]);
     } else {
-      // --- LOGIKA UNTUK USER BARU (STARTER WORKSPACE) ---
       const defaultFiles = ['main.s', 'utils/.keep', 'utils/math.s'];
       const defaultContents: Record<string, string> = {
         'main.s': DEFAULT_MAIN_CODE,
@@ -186,13 +184,56 @@ export default function MipsEmulatorPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sinkronisasi tab terbuka jika file dihapus dari Explorer
   useEffect(() => {
     setOpenTabs(prev => prev.filter(tab => files.includes(tab)));
   }, [files]);
 
   // =======================================================================
-  // LOGIKA MULTI-FILE & EDITOR TABS
+  // CUSTOM NATIVE RESIZER LOGIC (PENGGANTI LIBRARY)
+  // =======================================================================
+  const [sidebarWidth, setSidebarWidth] = useState(250);
+  const [terminalWidth, setTerminalWidth] = useState(400);
+
+  const startResizingSidebar = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    const startX = mouseDownEvent.clientX;
+    const startWidth = sidebarWidth;
+
+    const onMouseMove = (mouseMoveEvent: MouseEvent) => {
+      const newWidth = Math.max(150, Math.min(500, startWidth + mouseMoveEvent.clientX - startX));
+      setSidebarWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
+  const startResizingTerminal = (mouseDownEvent: React.MouseEvent) => {
+    mouseDownEvent.preventDefault();
+    const startX = mouseDownEvent.clientX;
+    const startWidth = terminalWidth;
+
+    const onMouseMove = (mouseMoveEvent: MouseEvent) => {
+      const newWidth = Math.max(250, Math.min(800, startWidth - (mouseMoveEvent.clientX - startX)));
+      setTerminalWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  };
+
+  // =======================================================================
+  // LOGIKA MULTI-FILE, EDITOR TABS & DRAG REORDERING
   // =======================================================================
   const handleOpenFile = (filename: string) => {
     if (!openTabs.includes(filename)) {
@@ -215,6 +256,35 @@ export default function MipsEmulatorPage() {
     setFileContents(prev => ({ ...prev, [activeFile]: newCode }));
     localStorage.setItem(`mips_fs_${activeFile}`, newCode);
     setIsCompiled(false);
+  };
+
+  // Drag and Drop (Swap) Logic for Tabs
+  const handleTabDragStart = (e: React.DragEvent, tab: string) => {
+    e.dataTransfer.setData('text/plain', tab);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleTabDragOver = (e: React.DragEvent) => {
+    e.preventDefault(); 
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleTabDrop = (e: React.DragEvent, targetTab: string) => {
+    e.preventDefault();
+    const sourceTab = e.dataTransfer.getData('text/plain');
+    if (!sourceTab || sourceTab === targetTab) return;
+
+    setOpenTabs(prev => {
+      const newTabs = [...prev];
+      const sourceIndex = newTabs.indexOf(sourceTab);
+      const targetIndex = newTabs.indexOf(targetTab);
+      
+      if (sourceIndex === -1 || targetIndex === -1) return prev;
+
+      newTabs.splice(sourceIndex, 1); // Cabut tab dari posisi lama
+      newTabs.splice(targetIndex, 0, sourceTab); // Masukkan ke posisi baru
+      return newTabs;
+    });
   };
 
   // =======================================================================
@@ -262,8 +332,16 @@ export default function MipsEmulatorPage() {
     generateMemoryDump(newAddr);
   };
 
-  const handleSearchMemory = () => {
-    const parsedAddr = parseInt(memorySearchInput, 16);
+  const handleSearchMemory = (overrideAddr?: any) => {
+    // 1. Mencegah reload halaman jika fungsi dipanggil dari form (tekan Enter)
+    if (overrideAddr && typeof overrideAddr === 'object' && overrideAddr.preventDefault) {
+      overrideAddr.preventDefault();
+    }
+    
+    // 2. Ambil target: Jika berupa string (dari tombol Quick Jump), gunakan itu. Jika tidak, gunakan input state.
+    const targetStr = typeof overrideAddr === 'string' ? overrideAddr : memorySearchInput;
+    
+    const parsedAddr = parseInt(targetStr, 16);
     if (!isNaN(parsedAddr)) {
       const alignedAddr = parsedAddr - (parsedAddr % 16); 
       setMemoryAddress(alignedAddr);
@@ -280,9 +358,6 @@ export default function MipsEmulatorPage() {
     });
   };
 
-  // ---------------------------------------------------------
-  // INTEGRASI ASSEMBLER
-  // ---------------------------------------------------------
   const handleBuild = () => {
     setIsRunning(false);
     memoryInstance.current.reset();
@@ -294,7 +369,7 @@ export default function MipsEmulatorPage() {
       const codeToCompile = fileContents['main.s'] !== undefined ? fileContents['main.s'] : fileContents[activeFile];
       
       if (!codeToCompile) {
-        throw new Error("Tidak ada kode untuk dikompilasi.");
+        throw new Error("No code found to compile.");
       }
 
       const compiled = assemblerInstance.current.compile(codeToCompile);
@@ -395,7 +470,6 @@ export default function MipsEmulatorPage() {
   };
 
   const handleResetAll = () => {
-    // SEKARANG HANYA MERESET STATE EMULATOR (FILE TETAP AMAN)
     setIsCompiled(false); 
     setIsRunning(false);
     memoryInstance.current.reset(); 
@@ -406,13 +480,13 @@ export default function MipsEmulatorPage() {
     syncUI();
     
     cpuInstance.current.onPrint('\r\n\x1b[32m[System]\x1b[0m MIPS32 OS Ready (Emulator Reset).\r\n');
-    cpuInstance.current.onPrint('\x1b[36m$ File di Workspace Anda tetap aman.\x1b[0m\r\n');
+    cpuInstance.current.onPrint('\x1b[36m$ Workspace files remain safe.\x1b[0m\r\n');
   };
 
   if (!isMounted) return <div className="flex h-screen w-screen items-center justify-center bg-[#09090b]"><span className="text-zinc-600 font-mono text-sm animate-pulse">Initializing IDE...</span></div>;
 
   // =======================================================================
-  // RENDER UI (FLEXBOX MURNI ORISINAL)
+  // RENDER UI
   // =======================================================================
   return (
     <div className="fixed inset-0 flex flex-col bg-[#09090b] text-zinc-300 font-sans w-full h-[100dvh] overflow-hidden">
@@ -440,8 +514,8 @@ export default function MipsEmulatorPage() {
           <div className="flex items-center gap-2 font-mono text-xs">
             <span className="text-zinc-100 font-semibold hidden md:inline">MIPS Web IDE</span>
             <span className="text-zinc-600 hidden md:inline">/</span>
-            <div className="flex items-center gap-1.5 bg-zinc-900/80 px-2 py-1 rounded border border-zinc-800 text-emerald-400">
-               <FileCode2 className="w-3.5 h-3.5" /> {activeFile ? activeFile.split('/').pop() : 'No file'}
+            <div className="flex items-center gap-1.5 bg-zinc-900/80 px-2 py-1 rounded border border-zinc-800 text-emerald-400 max-w-[120px] md:max-w-none truncate">
+               <FileCode2 className="w-3.5 h-3.5 shrink-0" /> <span className="truncate">{activeFile ? activeFile.split('/').pop() : 'No file'}</span>
             </div>
           </div>
         </div>
@@ -471,8 +545,11 @@ export default function MipsEmulatorPage() {
         </div>
       </header>
 
-      {/* TABS HEADER GLOBAL (Mobile & Desktop) */}
-      <div className="flex items-center px-2 pt-2 bg-[#09090b] border-b border-zinc-900 shrink-0 overflow-x-auto hide-scrollbar z-10 shadow-sm">
+      {/* TABS HEADER GLOBAL */}
+      <div 
+        className="flex items-center px-2 pt-2 bg-[#09090b] border-b border-zinc-900 shrink-0 overflow-x-auto hide-scrollbar z-10 shadow-sm w-full touch-pan-x" 
+        style={{ WebkitOverflowScrolling: 'touch' }}
+      >
         <button onClick={() => setActiveTab('code')} className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'code' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
           <Code2 className="w-3.5 h-3.5 mr-2" /> Code
         </button>
@@ -492,33 +569,34 @@ export default function MipsEmulatorPage() {
         )}
       </div>
 
-      {/* MAIN WORKSPACE */}
-      <div className="flex-1 flex flex-row w-full min-h-0 bg-[#0d0d0d]">
-        
-        {/* SIDEBAR PC (File Explorer Kustom) */}
-        <div className="hidden md:flex w-64 border-r border-zinc-900 bg-[#09090b] flex-col shrink-0">
-          <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} />
-        </div>
-
-        {/* CENTER + RIGHT AREA */}
+      {/* MAIN WORKSPACE (Native Resizer untuk Desktop / Flex untuk Mobile) */}
+      {isMobile ? (
+        // ======================= LAYOUT MOBILE (FLEXBOX MURNI) =======================
         <div className="flex-1 flex flex-col md:flex-row min-w-0 h-full">
-          
-          {/* CENTER PANEL (Code/Disassembly/Memory/Registers) */}
-          <div className={`flex-1 flex-col min-w-0 h-full ${isMobile && activeTab === 'terminal' ? 'hidden' : 'flex'}`}>
+          {/* MOBILE CENTER PANEL */}
+          <div className={`flex-1 flex-col min-w-0 h-full ${activeTab === 'terminal' ? 'hidden' : 'flex'}`}>
             
-            {/* TAB CONTENTS CODE */}
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] relative ${activeTab === 'code' ? 'flex' : 'hidden'}`}>
               
-              {/* TAB FILE AKTIF */}
-              <div className="flex items-center bg-[#09090b] border-b border-zinc-800 overflow-x-auto shrink-0 custom-scrollbar">
+              {/* TABS FILE UNTUK MOBILE */}
+              <div 
+                className="flex items-center bg-[#09090b] border-b border-zinc-800 overflow-x-auto shrink-0 hide-scrollbar w-full touch-pan-x" 
+                style={{ WebkitOverflowScrolling: 'touch' }}
+              >
                 {openTabs.map(file => (
-                  <div key={file} onClick={() => setActiveFile(file)} className={`group flex items-center gap-2 px-4 py-2 cursor-pointer border-r border-zinc-800 border-b-2 text-sm transition-colors min-w-max ${activeFile === file ? 'border-b-emerald-500 bg-[#1e1e1e] text-emerald-400' : 'border-b-transparent bg-[#09090b] text-zinc-500 hover:bg-[#18181b]'}`}>
+                  <div 
+                    key={file} 
+                    onClick={() => setActiveFile(file)} 
+                    // Event Drag Drop ditambahkan di sini
+                    draggable
+                    onDragStart={(e) => handleTabDragStart(e, file)}
+                    onDragOver={handleTabDragOver}
+                    onDrop={(e) => handleTabDrop(e, file)}
+                    className={`group flex items-center gap-2 px-4 py-2 cursor-pointer border-r border-zinc-800 border-b-2 text-sm transition-colors min-w-max shrink-0 select-none ${activeFile === file ? 'border-b-emerald-500 bg-[#1e1e1e] text-emerald-400' : 'border-b-transparent bg-[#09090b] text-zinc-500 hover:bg-[#18181b]'}`}
+                  >
                     <FileIcon size={14} className={activeFile === file ? "text-emerald-500" : "text-zinc-500"} />
                     <span>{file.split('/').pop()}</span>
-                    
-                    <button onClick={(e) => closeTab(file, e)} className={`ml-1 transition-opacity p-0.5 rounded ${activeFile === file ? 'opacity-100 text-zinc-400 hover:text-rose-400 hover:bg-zinc-700' : 'opacity-0 group-hover:opacity-100 hover:text-rose-400'}`} title="Tutup Tab">
-                      <X size={13} />
-                    </button>
+                    <button onClick={(e) => closeTab(file, e)} className={`ml-1 transition-opacity p-0.5 rounded ${activeFile === file ? 'opacity-100 text-zinc-400 hover:text-rose-400 hover:bg-zinc-700' : 'opacity-0 group-hover:opacity-100 hover:text-rose-400'}`} title="Close Tab"><X size={13} /></button>
                   </div>
                 ))}
               </div>
@@ -527,48 +605,114 @@ export default function MipsEmulatorPage() {
               <div className="flex-1 relative">
                 <div className="absolute inset-0">
                   {activeFile ? (
-                    <EditorView 
-                      key={activeFile} 
-                      code={fileContents[activeFile] || ''} 
-                      setCode={handleCodeChange} 
-                      setIsCompiled={setIsCompiled} 
-                      editorBreakpoints={editorBreakpoints} 
-                      setEditorBreakpoints={setEditorBreakpoints} 
-                      isMobile={isMobile} 
-                    />
+                    <EditorView key={activeFile} code={fileContents[activeFile] || ''} setCode={handleCodeChange} setIsCompiled={setIsCompiled} editorBreakpoints={editorBreakpoints} setEditorBreakpoints={setEditorBreakpoints} isMobile={isMobile} />
                   ) : (
-                    <div className="flex items-center justify-center h-full text-zinc-500 font-mono text-sm bg-[#1e1e1e]">
-                      Pilih atau buat file untuk mulai mengedit.
-                    </div>
+                    <div className="flex items-center justify-center h-full text-zinc-500 font-mono text-sm bg-[#1e1e1e]">Select or create a file to start editing.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'disassembly' ? 'flex' : 'hidden'}`}>
+              <DisassemblyView disassembly={disassembly} activePC={activePC} addressBreakpoints={addressBreakpoints} toggleBreakpoint={toggleBreakpoint} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
+            </div>
+            <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'memory' ? 'flex' : 'hidden'}`}>
+              <MemoryView memoryDump={memoryDump} memorySearchInput={memorySearchInput} setMemorySearchInput={setMemorySearchInput} handleSearchMemory={handleSearchMemory} handlePageMemory={handlePageMemory} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
+            </div>
+            <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'registers' ? 'flex' : 'hidden'}`}>
+              <RegistersView regValues={regValues} />
+            </div>
+          </div>
+
+          {/* MOBILE TERMINAL PANEL */}
+          <div className={`w-full border-l border-zinc-900 bg-[#0a0a0a] flex-col shrink-0 min-h-0 ${activeTab !== 'terminal' ? 'hidden' : 'flex'}`}>
+             <TerminalView cpu={cpuInstance.current} activeTab={activeTab} isMobile={isMobile} syncUI={syncUI} setIsRunning={setIsRunning} requestCycle={() => requestAnimationFrame(executeCycle)} />
+          </div>
+        </div>
+
+      ) : (
+        // ======================= LAYOUT DESKTOP (NATIVE DRAG RESIZER) =======================
+        <div className="flex-1 flex flex-row w-full min-h-0 bg-[#0d0d0d]">
+          
+          {/* PC PANEL 1: SIDEBAR (File Explorer) */}
+          <div 
+            style={{ width: sidebarWidth, minWidth: '150px' }} 
+            className="hidden md:flex flex-col bg-[#09090b] border-r border-zinc-900 shrink-0"
+          >
+            <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} />
+          </div>
+
+          {/* RESIZER 1 */}
+          <div 
+            onMouseDown={startResizingSidebar} 
+            className="hidden md:block w-1.5 bg-zinc-900 hover:bg-emerald-500 cursor-col-resize z-10 shrink-0 transition-colors" 
+          />
+
+          {/* PC PANEL 2: CENTER WORKSPACE */}
+          <div className="flex-1 flex flex-col min-w-0 h-full relative">
+            <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] relative ${activeTab === 'code' ? 'flex' : 'hidden'}`}>
+              
+              {/* TABS FILE UNTUK DESKTOP (Dengan Drag & Drop) */}
+              <div 
+                className="flex items-center bg-[#09090b] border-b border-zinc-800 overflow-x-auto shrink-0 hide-scrollbar w-full"
+              >
+                {openTabs.map(file => (
+                  <div 
+                    key={file} 
+                    onClick={() => setActiveFile(file)} 
+                    // Event Drag Drop ditambahkan di sini
+                    draggable
+                    onDragStart={(e) => handleTabDragStart(e, file)}
+                    onDragOver={handleTabDragOver}
+                    onDrop={(e) => handleTabDrop(e, file)}
+                    className={`group flex items-center gap-2 px-4 py-2 cursor-pointer border-r border-zinc-800 border-b-2 text-sm transition-colors min-w-max shrink-0 select-none ${activeFile === file ? 'border-b-emerald-500 bg-[#1e1e1e] text-emerald-400' : 'border-b-transparent bg-[#09090b] text-zinc-500 hover:bg-[#18181b]'}`}
+                  >
+                    <FileIcon size={14} className={activeFile === file ? "text-emerald-500" : "text-zinc-500"} />
+                    <span>{file.split('/').pop()}</span>
+                    <button onClick={(e) => closeTab(file, e)} className={`ml-1 transition-opacity p-0.5 rounded ${activeFile === file ? 'opacity-100 text-zinc-400 hover:text-rose-400 hover:bg-zinc-700' : 'opacity-0 group-hover:opacity-100 hover:text-rose-400'}`} title="Close Tab"><X size={13} /></button>
+                  </div>
+                ))}
+              </div>
+
+              {/* EDITOR VIEW */}
+              <div className="flex-1 relative">
+                <div className="absolute inset-0">
+                  {activeFile ? (
+                    <EditorView key={activeFile} code={fileContents[activeFile] || ''} setCode={handleCodeChange} setIsCompiled={setIsCompiled} editorBreakpoints={editorBreakpoints} setEditorBreakpoints={setEditorBreakpoints} isMobile={isMobile} />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-zinc-500 font-mono text-sm bg-[#1e1e1e]">Select or create a file to start editing.</div>
                   )}
                 </div>
               </div>
             </div>
             
-            {/* DISASSEMBLY VIEW */}
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'disassembly' ? 'flex' : 'hidden'}`}>
               <DisassemblyView disassembly={disassembly} activePC={activePC} addressBreakpoints={addressBreakpoints} toggleBreakpoint={toggleBreakpoint} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
             </div>
-
-            {/* MEMORY VIEW */}
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'memory' ? 'flex' : 'hidden'}`}>
               <MemoryView memoryDump={memoryDump} memorySearchInput={memorySearchInput} setMemorySearchInput={setMemorySearchInput} handleSearchMemory={handleSearchMemory} handlePageMemory={handlePageMemory} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
             </div>
-
-            {/* REGISTERS VIEW */}
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'registers' ? 'flex' : 'hidden'}`}>
               <RegistersView regValues={regValues} />
             </div>
-
           </div>
 
-          {/* RIGHT PANEL: TERMINAL */}
-          <div className={`w-full md:w-[400px] lg:w-[450px] border-l border-zinc-900 bg-[#0a0a0a] flex-col shrink-0 min-h-0 ${isMobile && activeTab !== 'terminal' ? 'hidden' : 'flex'}`}>
+          {/* RESIZER 2 (Hanya muncul jika Terminal terbuka) */}
+          <div 
+            onMouseDown={startResizingTerminal} 
+            className={`hidden md:block w-1.5 bg-zinc-900 hover:bg-emerald-500 cursor-col-resize z-10 shrink-0 transition-colors ${activeTab !== 'terminal' && !isMobile ? '' : 'hidden'}`} 
+          />
+
+          {/* PC PANEL 3: TERMINAL */}
+          <div 
+            style={{ width: terminalWidth, minWidth: '250px' }} 
+            className={`flex-col bg-[#0a0a0a] border-l border-zinc-900 shrink-0 min-h-0 ${activeTab !== 'terminal' && !isMobile ? 'flex' : 'hidden'}`}
+          >
              <TerminalView cpu={cpuInstance.current} activeTab={activeTab} isMobile={isMobile} syncUI={syncUI} setIsRunning={setIsRunning} requestCycle={() => requestAnimationFrame(executeCycle)} />
           </div>
 
         </div>
-      </div>
+      )}
 
       {/* MOBILE BOTTOM ACTION BAR */}
       {isMobile && (
