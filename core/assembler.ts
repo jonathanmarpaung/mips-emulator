@@ -4,43 +4,47 @@ export class Assembler {
   
   /**
    * ========================================================================
-   * 1. PREPROCESSOR (Handling .include directives)
-   * Recursively injects file contents and prevents Circular Inclusion.
+   * 1. PREPROCESSOR (Mendukung .include & Virtual File System)
+   * Menggabungkan file secara rekursif dan memblokir Infinite Loop (Circular).
    * ========================================================================
    */
-  private preprocess(code: string, visitedFiles: Set<string> = new Set(['main.s'])): string {
+  private preprocess(code: string, visitedFiles: Set<string>): string {
     const lines = code.split('\n');
     const processedLines: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      // Detect pattern: .include "filename.s"
+      // Deteksi pola: .include "namafile.s" atau .include "folder/math.s"
       const includeMatch = line.match(/^\s*\.include\s+"([^"]+)"/);
 
       if (includeMatch) {
-        const filename = includeMatch[1];
+        let filename = includeMatch[1];
+        
+        // Normalisasi path (jika user iseng menulis ./math.s)
+        if (filename.startsWith('./')) filename = filename.substring(2);
 
-        // Absolute Protection: Prevent Infinite Loop (A -> B -> A)
+        // PROTEKSI MUTLAK: Mencegah Infinite Loop (A include B, B include A)
         if (visitedFiles.has(filename)) {
-          throw new Error(`[Preprocessor Error] Circular include detected in file: "${filename}"`);
+          throw new Error(`[Preprocessor Error] Terdeteksi Circular Include (Looping) pada file: "${filename}"`);
         }
 
-        // Fetch text content from Virtual File System (localStorage)
+        // Mengambil isi teks file dari Virtual File System (LocalStorage)
         const fileKey = `mips_fs_${filename}`;
-        const fileContent = localStorage.getItem(fileKey);
+        const fileContent = typeof window !== 'undefined' ? localStorage.getItem(fileKey) : null;
 
         if (fileContent === null) {
-          throw new Error(`[Preprocessor Error] File not found: "${filename}". Please ensure it exists in the Workspace.`);
+          throw new Error(`[Preprocessor Error] File tidak ditemukan: "${filename}". Pastikan file berada di Explorer.`);
         }
 
+        // Tandai file ini sudah dikunjungi di cabang rekursif ini
         const newVisited = new Set(visitedFiles);
         newVisited.add(filename);
 
-        // Recursive call: If the included file has its own .include directives
+        // Rekursif: Jika file yang di-include ternyata meng-include file lain
         const processedInclude = this.preprocess(fileContent, newVisited);
         
-        // Inject the file content with comment markers for debugging purposes
+        // Suntikkan isi file dengan penanda komentar untuk debugging
         processedLines.push(`# --- BEGIN INCLUDE: ${filename} ---`);
         processedLines.push(processedInclude);
         processedLines.push(`# --- END INCLUDE: ${filename} ---`);
@@ -55,11 +59,11 @@ export class Assembler {
   /**
    * ========================================================================
    * STRICT SECURITY GATE 1: Register Validation
-   * Throws an error if the register format is unrecognized.
+   * Mendukung integer register ($t0) dan FPU register ($f0)
    * ========================================================================
    */
   private parseRegister(regStr: string): number {
-    if (!regStr) throw new Error(`[Syntax Error] Missing register argument!`);
+    if (!regStr) throw new Error(`[Syntax Error] Argumen register hilang!`);
     const clean = regStr.trim().replace(',', '').toLowerCase();
     
     const regMap: Record<string, number> = {
@@ -75,12 +79,12 @@ export class Assembler {
 
     if (regMap[clean] !== undefined) return regMap[clean];
 
-    // Detect FPU registers ($f0 - $f31)
+    // Deteksi FPU register ($f0 - $f31)
     if (clean.startsWith('$f')) {
       const num = parseInt(clean.substring(2), 10);
       if (!isNaN(num) && num >= 0 && num <= 31) return num;
     }
-    // Detect raw numerical registers (e.g., $8 or just 8)
+    // Deteksi angka mentah (e.g., $8 atau 8)
     if (clean.startsWith('$')) {
       const num = parseInt(clean.substring(1), 10);
       if (!isNaN(num)) return num;
@@ -89,7 +93,7 @@ export class Assembler {
       if (!isNaN(num)) return num;
     }
 
-    throw new Error(`[Syntax Error] Invalid or unknown register: "${regStr}"`);
+    throw new Error(`[Syntax Error] Not valid Register: "${regStr}"`);
   }
 
   /**
@@ -98,16 +102,14 @@ export class Assembler {
    * ========================================================================
    */
   private parseImmediateOrLabel(valStr: string, symbols: Record<string, number>): number {
-    if (!valStr) throw new Error(`[Syntax Error] Missing immediate or label argument!`);
+    if (!valStr) throw new Error(`[Syntax Error] Argument label/immediate missing!`);
     
-    // Check if it's a raw number
     const num = parseInt(valStr, 10);
     if (!isNaN(num)) return num;
 
-    // Check if it's a declared label
     if (symbols[valStr] !== undefined) return symbols[valStr];
 
-    throw new Error(`[Reference Error] Unresolved label reference: "${valStr}"`);
+    throw new Error(`[Reference Error] Label is not found: "${valStr}"`);
   }
 
   /**
@@ -115,9 +117,10 @@ export class Assembler {
    * 2. MAIN COMPILER (TWO-PASS ASSEMBLER)
    * ========================================================================
    */
-  public compile(rawCode: string) {
-    // STAGE 0: Execute Preprocessor (Merge all .include files)
-    const code = this.preprocess(rawCode);
+  public compile(rawCode: string, entryFilename: string = 'main.s') {
+    // STAGE 0: Eksekusi Preprocessor (Gabungkan semua file .include)
+    const initialVisited = new Set<string>([entryFilename]);
+    const code = this.preprocess(rawCode, initialVisited);
     const lines = code.split('\n');
 
     const symbols: Record<string, number> = {};
@@ -134,14 +137,13 @@ export class Assembler {
     let pendingLabels: string[] = [];
 
     for (let i = 0; i < lines.length; i++) {
-      let line = lines[i].split('#')[0].trim(); // Strip comments
+      let line = lines[i].split('#')[0].trim();
       if (!line) continue;
 
       if (line === '.data') { currentSection = 'data'; continue; }
       if (line === '.text') { currentSection = 'text'; continue; }
       if (line.startsWith('.globl')) continue;
 
-      // Extract labels (e.g., "main:")
       const labelMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):/);
       if (labelMatch) {
         pendingLabels.push(labelMatch[1]);
@@ -150,13 +152,11 @@ export class Assembler {
       }
 
       if (currentSection === 'data') {
-        // AUTO-ALIGNMENT: Ensure floats and words are placed on word boundaries (multiple of 4)
         if (line.startsWith('.word') || line.startsWith('.float')) {
           const rem = dataAddress % 4;
           if (rem !== 0) dataAddress += (4 - rem);
         }
 
-        // Bind pending labels to the aligned data address
         for (const lbl of pendingLabels) symbols[lbl] = dataAddress;
         pendingLabels = [];
 
@@ -164,17 +164,14 @@ export class Assembler {
           const strMatch = line.match(/\.asciiz\s+"(.*)"/);
           if (strMatch) {
             let rawStr = strMatch[1].replace(/\\n/g, '\n').replace(/\\t/g, '\t');
-            let byteLength = rawStr.length + 1; // +1 for \0 Null Terminator
-            
+            let byteLength = rawStr.length + 1; 
             const bytes = new Uint8Array(byteLength);
             for (let b = 0; b < rawStr.length; b++) bytes[b] = rawStr.charCodeAt(b);
             bytes[rawStr.length] = 0;
 
             data.push({ address: dataAddress, data: bytes });
             dataAddress += byteLength;
-          } else {
-             throw new Error(`[Syntax Error] Invalid .asciiz format on line ${i+1}`);
-          }
+          } else throw new Error(`[Syntax Error] Format .asciiz is not valid on line ${i+1}`);
         } 
         else if (line.startsWith('.float')) {
           const match = line.match(/\.float\s+([-\d.eE]+)/);
@@ -182,26 +179,23 @@ export class Assembler {
             const floatVal = parseFloat(match[1]);
             const buffer = new ArrayBuffer(4);
             const view = new DataView(buffer);
-            view.setFloat32(0, floatVal, false); // false = Big-Endian
+            view.setFloat32(0, floatVal, false); 
             
             const bytes = new Uint8Array(4);
             for(let b=0; b<4; b++) bytes[b] = view.getUint8(b);
             
             data.push({ address: dataAddress, data: bytes });
             dataAddress += 4;
-          } else {
-            throw new Error(`[Syntax Error] Invalid .float format on line ${i+1}`);
-          }
+          } else throw new Error(`[Syntax Error] Format .float is not valid on line ${i+1}`);
         }
         else if (line.startsWith('.word')) {
-          // Basic support for array of words: .word 10, 20, 30
           const parts = line.replace(/,/g, ' ').split(/\s+/).slice(1);
           for (const p of parts) {
              if (!p) continue;
              const val = parseInt(p, 10) || 0;
              const buffer = new ArrayBuffer(4);
              const view = new DataView(buffer);
-             view.setInt32(0, val, false); // false = Big-Endian
+             view.setInt32(0, val, false); 
              
              const bytes = new Uint8Array(4);
              for(let b=0; b<4; b++) bytes[b] = view.getUint8(b);
@@ -212,30 +206,19 @@ export class Assembler {
         }
       } 
       else {
-        // Bind pending labels to the current instruction address
         for (const lbl of pendingLabels) symbols[lbl] = textAddress;
         pendingLabels = [];
 
         const parts = line.replace(/,/g, ' ').split(/\s+/);
         const mnemonic = parts[0].toLowerCase();
-        
         let instrSize = 4;
         
-        // MACRO PREDICTION: Accurately estimate address shifts for pseudo-instructions
-        if (mnemonic === 'la') {
-            instrSize = 8; // la always expands to lui + ori
-        }
-        else if (['lw', 'sw', 'lwc1', 'swc1'].includes(mnemonic)) {
-           // If it lacks '(', it is using a macro label (e.g., lwc1 $f12, pi) -> 8 bytes
-           if (!parts[2]?.includes('(')) instrSize = 8;
-        }
-        else if (mnemonic === 'bge' || mnemonic === 'blt') {
-            instrSize = 8; // Expands to slt + beq/bne
-        }
+        if (mnemonic === 'la') instrSize = 8;
+        else if (['lw', 'sw', 'lwc1', 'swc1'].includes(mnemonic) && !parts[2]?.includes('(')) instrSize = 8;
+        else if (mnemonic === 'bge' || mnemonic === 'blt') instrSize = 8;
         else if (mnemonic === 'li') {
            const isLabel = isNaN(parseInt(parts[2], 10));
            const immVal = parseInt(parts[2], 10);
-           // If it references a label or a 32-bit immediate, it expands to 8 bytes
            if (isLabel || immVal > 32767 || immVal < -32768) instrSize = 8;
         }
 
@@ -254,9 +237,11 @@ export class Assembler {
       let line = lines[i].split('#')[0].trim();
       if (!line) continue;
 
-      if (line === '.data') { currentSection = 'data'; continue; }
-      if (line === '.text') { currentSection = 'text'; continue; }
-      if (line.startsWith('.globl')) continue;
+      if (line === '.data' || line === '.text' || line.startsWith('.globl')) {
+        if (line === '.data') currentSection = 'data';
+        if (line === '.text') currentSection = 'text';
+        continue;
+      }
 
       const labelMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):/);
       if (labelMatch) {
@@ -268,20 +253,21 @@ export class Assembler {
          const parts = line.replace(/,/g, ' ').split(/\s+/);
          const mnemonic = parts[0].toLowerCase();
 
-         // Smart Helper to push instruction to memory array
          const emit = (mCode: number, textToDisplay: string) => {
            instructions.push({
              address: textAddress,
              machineCode: mCode,
              hexString: (mCode >>> 0).toString(16).padStart(8, '0'),
-             originalText: textToDisplay, // Adjusts dynamically for macro expansions
+             originalText: textToDisplay, 
              originalLine: i + 1
            });
            textAddress += 4;
          };
 
-         if (mnemonic === 'nop') { emit(0, originalText); }
-         else if (mnemonic === 'syscall') { emit(0x0c, originalText); }
+         if (mnemonic === 'nop') emit(0, originalText);
+         else if (mnemonic === 'syscall') emit(0x0c, originalText);
+         
+         // ALU Operations
          else if (['add', 'sub', 'and', 'or', 'slt'].includes(mnemonic)) {
            const rd = this.parseRegister(parts[1]);
            const rs = this.parseRegister(parts[2]);
@@ -313,17 +299,17 @@ export class Assembler {
            const rt = this.parseRegister(parts[1]);
            const targetAddr = this.parseImmediateOrLabel(parts[2], symbols);
 
-           // 'la' always uses lui+ori. 'li' uses it if > 16-bit or label reference
            if (mnemonic === 'la' || targetAddr > 32767 || targetAddr < -32768) {
                const upper = (targetAddr >>> 16) & 0xFFFF;
                const lower = targetAddr & 0xFFFF;
                emit((0x0f << 26) | (0 << 21) | (1 << 16) | upper, `lui $at, 0x${upper.toString(16)}`);
                emit((0x0d << 26) | (1 << 21) | (rt << 16) | lower, `ori ${parts[1]}, $at, 0x${lower.toString(16)}`);
            } else {
-               // Simple 'li' fits in a single addiu instruction
                emit((0x09 << 26) | (0 << 21) | (rt << 16) | (targetAddr & 0xFFFF), originalText); 
            }
          }
+         
+         // Memory Access
          else if (['lw', 'sw', 'lwc1', 'swc1'].includes(mnemonic)) {
             let op = 0;
             if (mnemonic === 'lw')   op = 0x23;
@@ -335,12 +321,10 @@ export class Assembler {
             const memMatch = parts[2] ? parts[2].match(/^([-\d]+)\((.+)\)$/) : null;
 
             if (memMatch) {
-                // Standard offset format: 0($t0)
                 const imm = parseInt(memMatch[1], 10);
                 const rs = this.parseRegister(memMatch[2]);
                 emit((op << 26) | (rs << 21) | (rt << 16) | (imm & 0xFFFF), originalText);
             } else {
-                // Macro format: lwc1 $f12, pi  ->  Expands to LUI + LWC1
                 const targetAddr = this.parseImmediateOrLabel(parts[2], symbols);
                 const upper = (targetAddr >>> 16) & 0xFFFF;
                 const lower = targetAddr & 0xFFFF;
@@ -348,10 +332,12 @@ export class Assembler {
                 emit((op << 26) | (1 << 21) | (rt << 16) | lower, `${mnemonic} ${parts[1]}, 0x${lower.toString(16)}($at)`);
             }
          }
+         
+         // Branching & Jumping
          else if (mnemonic === 'j' || mnemonic === 'jal') {
            const targetAddr = this.parseImmediateOrLabel(parts[1], symbols);
            const op = mnemonic === 'j' ? 0x02 : 0x03;
-           const addressValue = (targetAddr >>> 2) & 0x03FFFFFF; // Word-aligned shift
+           const addressValue = (targetAddr >>> 2) & 0x03FFFFFF; 
            emit((op << 26) | addressValue, originalText);
          }
          else if (mnemonic === 'jr') {
@@ -365,13 +351,10 @@ export class Assembler {
             const targetAddr = this.parseImmediateOrLabel(parts[3], symbols);
 
             if (op !== 0) { 
-                // Pure branch instructions (beq, bne)
                 const offset = ((targetAddr - (textAddress + 4)) >> 2) & 0xFFFF;
                 emit((op << 26) | (rs << 21) | (rt << 16) | offset, originalText);
             } else { 
-                // Macro branch instructions (bge, blt) expanding into slt + beq/bne
                 const offset = ((targetAddr - (textAddress + 8)) >> 2) & 0xFFFF; 
-                
                 if (mnemonic === 'bge') { 
                     emit((0 << 26) | (rs << 21) | (rt << 16) | (1 << 11) | (0 << 6) | 0x2a, `slt $at, ${parts[1]}, ${parts[2]}`);
                     emit((0x04 << 26) | (1 << 21) | (0 << 16) | offset, `beq $at, $zero, ${parts[3]}`);
@@ -381,11 +364,33 @@ export class Assembler {
                 }
             }
          }
+         
+         // ========================================================================
+         // NEW FEATURE: COPROCESSOR 1 (FPU - Floating Point Instructions)
+         // ========================================================================
+         else if (['mfc1', 'mtc1'].includes(mnemonic)) {
+            const rt = this.parseRegister(parts[1]); // Int register
+            const fs = this.parseRegister(parts[2]); // Float register
+            const fmt = mnemonic === 'mfc1' ? 0x00 : 0x04;
+            emit((0x11 << 26) | (fmt << 21) | (rt << 16) | (fs << 11) | (0 << 6) | 0x00, originalText);
+         }
+         else if (['add.s', 'sub.s', 'mul.s', 'div.s'].includes(mnemonic)) {
+            const fd = this.parseRegister(parts[1]);
+            const fs = this.parseRegister(parts[2]);
+            const ft = this.parseRegister(parts[3]);
+            let funct = 0x00;
+            if (mnemonic === 'sub.s') funct = 0x01;
+            if (mnemonic === 'mul.s') funct = 0x02;
+            if (mnemonic === 'div.s') funct = 0x03;
+            // Opcode 0x11, Format 0x10 (Single Precision)
+            emit((0x11 << 26) | (0x10 << 21) | (ft << 16) | (fs << 11) | (fd << 6) | funct, originalText);
+         }
+         
          // ========================================================================
          // STRICT SECURITY GATE 3: Catch Unknown/Invalid Instructions
          // ========================================================================
          else {
-           throw new Error(`[Syntax Error] Unknown instruction or invalid format: "${mnemonic}" on line ${i + 1}\n=> ${originalText}`);
+           throw new Error(`[Syntax Error] Not valid instruction: "${mnemonic}" on line ${i + 1}\n=> ${originalText}`);
          }
       }
     }

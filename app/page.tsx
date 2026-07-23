@@ -1,57 +1,119 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from 'react';
+import dynamic from 'next/dynamic';
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { 
   Play, StepForward, RotateCcw, Hammer, Pause, AlertTriangle,
-  Cpu, Code2, Settings2, FileCode2, Database, Menu, TerminalSquare, LayoutList, FolderCode
+  Cpu, Code2, FileCode2, Database, Menu, TerminalSquare, LayoutList, FolderCode,
+  File as FileIcon, X
 } from "lucide-react";
 
+// =======================================================================
+// IMPORT INTI EMULATOR & MEMORY
+// =======================================================================
 import { Memory, DATA_BASE, TEXT_BASE } from '@/core/memory';
 import { CPU, CPUStatus } from '@/core/cpu';
 import { Assembler } from '@/core/assembler';
 
-// Import Components
-import { Sidebar } from '@/components/emulator/Sidebar';
-import { EditorView } from '@/components/emulator/EditorView';
+// =======================================================================
+// IMPORT KOMPONEN UI
+// =======================================================================
 import { DisassemblyView } from '@/components/emulator/DisassemblyView';
 import { MemoryView } from '@/components/emulator/MemoryView';
-import { TerminalView } from '@/components/emulator/TerminalView';
 import { RegistersView } from '@/components/emulator/RegistersView';
+import { FileExplorer } from '@/components/emulator/FileExplorer';
 
-const DEFAULT_CODE = `# ==============================================================================
-# MIPS WEB EMULATOR
-# Contoh: Entry Point & Hello World
+// =======================================================================
+// OPTIMASI PERFORMA: LAZY LOADING
+// =======================================================================
+const EditorView = dynamic(
+  () => import('@/components/emulator/EditorView').then(mod => mod.EditorView),
+  { ssr: false, loading: () => <div className="absolute inset-0 flex items-center justify-center bg-[#1e1e1e] text-zinc-600 text-xs font-mono">Menyiapkan Editor...</div> }
+);
+
+const TerminalView = dynamic(
+  () => import('@/components/emulator/TerminalView').then(mod => mod.TerminalView),
+  { ssr: false, loading: () => <div className="absolute inset-0 flex items-center justify-center bg-[#0a0a0a] text-zinc-600 text-xs font-mono">Menyiapkan Terminal...</div> }
+);
+
+// =======================================================================
+// TEMPLATE KODE UNTUK USER BARU (Mencontohkan fitur .include)
+// =======================================================================
+const DEFAULT_MAIN_CODE = `# ==============================================================================
+# MIPS OS WEB IDE
+# Contoh: Entry Point & Multi-file support
 # ==============================================================================
 
+.include "utils/math.s"
+
 .data
-    hello: .asciiz "Hello, World!\\n"
+    hello: .asciiz "Halo dari MIPS OS!\\n"
+    hasil_msg: .asciiz "Hasil perhitungan 10 + 5 = "
 
 .text
 .globl main
 
-fungsi_dummy:
-    li $v0, 10
-    syscall
-
 main:
+    # 1. Cetak String Halo
     li $v0, 4
     la $a0, hello
     syscall
 
+    # 2. Siapkan parameter untuk fungsi tambah_angka (di utils/math.s)
+    li $a0, 10
+    li $a1, 5
+    jal tambah_angka
+
+    # 3. Simpan hasil kembalian ($v0) ke register temporary ($t0)
+    move $t0, $v0
+
+    # 4. Cetak pesan hasil
+    li $v0, 4
+    la $a0, hasil_msg
+    syscall
+
+    # 5. Cetak angka hasil (berada di $t0)
+    li $v0, 1
+    move $a0, $t0
+    syscall
+
+    # 6. Keluar program
     li $v0, 10
     syscall
+`;
+
+const DEFAULT_MATH_CODE = `# File: utils/math.s
+# Fungsi-fungsi utilitas matematika
+
+tambah_angka:
+    # Menambahkan $a0 dan $a1, mengembalikan hasil di $v0
+    add $v0, $a0, $a1
+    jr $ra
 `;
 
 export default function MipsEmulatorPage() {
   const [isMounted, setIsMounted] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   
-  // Single Source of Truth untuk Tab Navigation
+  // Tab Navigasi Inti (UI Global)
   const [activeTab, setActiveTab] = useState<string>('code');
   
-  const [code, setCode] = useState<string>(DEFAULT_CODE);
+  // =======================================================================
+  // MULTI-FILE SYSTEM STATE
+  // =======================================================================
+  const [files, setFiles] = useState<string[]>(['main.s']);
+  const [activeFile, setActiveFile] = useState<string>('main.s');
+  const [openTabs, setOpenTabs] = useState<string[]>(['main.s']); 
+  
+  const [fileContents, setFileContents] = useState<Record<string, string>>({
+    'main.s': DEFAULT_MAIN_CODE
+  });
+
+  // =======================================================================
+  // EMULATOR STATE & REFS
+  // =======================================================================
   const [isRunning, setIsRunning] = useState(false);
   const [isCompiled, setIsCompiled] = useState(false);
   
@@ -66,22 +128,98 @@ export default function MipsEmulatorPage() {
   const [editorBreakpoints, setEditorBreakpoints] = useState<Set<number>>(new Set());
   const [addressBreakpoints, setAddressBreakpoints] = useState<Set<number>>(new Set());
 
+  // Inisialisasi Inti 
   const memoryInstance = useRef(new Memory());
   const cpuInstance = useRef(new CPU(memoryInstance.current));
   const assemblerInstance = useRef(new Assembler());
   const isResumingRef = useRef(false);
-  
   const entryPointRef = useRef<number>(TEXT_BASE);
 
+  // =======================================================================
+  // INITIALIZATION & EVENT LISTENERS
+  // =======================================================================
   useEffect(() => {
     setIsMounted(true);
+    
+    // Muat File dari LocalStorage
+    const loadedFiles: string[] = [];
+    const loadedContents: Record<string, string> = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('mips_fs_')) {
+        const filename = key.replace('mips_fs_', '');
+        loadedFiles.push(filename);
+        loadedContents[filename] = localStorage.getItem(key) || '';
+      }
+    }
+    
+    if (loadedFiles.length > 0) {
+      setFiles(loadedFiles);
+      setFileContents(loadedContents);
+      const initialFile = loadedFiles.includes('main.s') ? 'main.s' : loadedFiles[0];
+      setActiveFile(initialFile);
+      setOpenTabs([initialFile]);
+    } else {
+      // --- LOGIKA UNTUK USER BARU (STARTER WORKSPACE) ---
+      const defaultFiles = ['main.s', 'utils/.keep', 'utils/math.s'];
+      const defaultContents: Record<string, string> = {
+        'main.s': DEFAULT_MAIN_CODE,
+        'utils/.keep': '',
+        'utils/math.s': DEFAULT_MATH_CODE
+      };
+
+      defaultFiles.forEach(f => {
+        localStorage.setItem(`mips_fs_${f}`, defaultContents[f]);
+      });
+
+      setFiles(defaultFiles);
+      setFileContents(defaultContents);
+      setActiveFile('main.s');
+      setOpenTabs(['main.s']);
+    }
+
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     handleResize(); 
     window.addEventListener('resize', handleResize);
     syncUI();
     return () => window.removeEventListener('resize', handleResize);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Sinkronisasi tab terbuka jika file dihapus dari Explorer
+  useEffect(() => {
+    setOpenTabs(prev => prev.filter(tab => files.includes(tab)));
+  }, [files]);
+
+  // =======================================================================
+  // LOGIKA MULTI-FILE & EDITOR TABS
+  // =======================================================================
+  const handleOpenFile = (filename: string) => {
+    if (!openTabs.includes(filename)) {
+      setOpenTabs(prev => [...prev, filename]);
+    }
+    setActiveFile(filename);
+  };
+
+  const closeTab = (filename: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const newTabs = openTabs.filter(t => t !== filename);
+    setOpenTabs(newTabs);
+    
+    if (activeFile === filename) {
+      setActiveFile(newTabs.length > 0 ? newTabs[newTabs.length - 1] : '');
+    }
+  };
+
+  const handleCodeChange = (newCode: string) => {
+    setFileContents(prev => ({ ...prev, [activeFile]: newCode }));
+    localStorage.setItem(`mips_fs_${activeFile}`, newCode);
+    setIsCompiled(false);
+  };
+
+  // =======================================================================
+  // LOGIKA EMULATOR & ASSEMBLER
+  // =======================================================================
   const syncUI = () => {
     const cpu = cpuInstance.current;
     setActivePC(cpu.pc);
@@ -142,6 +280,9 @@ export default function MipsEmulatorPage() {
     });
   };
 
+  // ---------------------------------------------------------
+  // INTEGRASI ASSEMBLER
+  // ---------------------------------------------------------
   const handleBuild = () => {
     setIsRunning(false);
     memoryInstance.current.reset();
@@ -150,7 +291,13 @@ export default function MipsEmulatorPage() {
     cpuInstance.current.onPrint('\x1b[90m[System] Initiating Build Process...\x1b[0m\r\n');
 
     try {
-      const compiled = assemblerInstance.current.compile(code);
+      const codeToCompile = fileContents['main.s'] !== undefined ? fileContents['main.s'] : fileContents[activeFile];
+      
+      if (!codeToCompile) {
+        throw new Error("Tidak ada kode untuk dikompilasi.");
+      }
+
+      const compiled = assemblerInstance.current.compile(codeToCompile);
       const newDisasm = [];
       const newAddressBps = new Set<number>();
       
@@ -248,20 +395,25 @@ export default function MipsEmulatorPage() {
   };
 
   const handleResetAll = () => {
-    setIsCompiled(false); setIsRunning(false);
-    memoryInstance.current.reset(); cpuInstance.current.reset();
+    // SEKARANG HANYA MERESET STATE EMULATOR (FILE TETAP AMAN)
+    setIsCompiled(false); 
+    setIsRunning(false);
+    memoryInstance.current.reset(); 
+    cpuInstance.current.reset();
     entryPointRef.current = TEXT_BASE;
-    setDisassembly([]); setMemoryDump([]); syncUI();
-    let deletedFiles = 0;
-    Object.keys(localStorage).forEach(key => {
-      if (key.startsWith('mips_fs_')) { localStorage.removeItem(key); deletedFiles++; }
-    });
-    cpuInstance.current.onPrint('\r\n\x1b[32m[System]\x1b[0m MIPS32 OS Ready (Total Reset).\r\n');
-    if (deletedFiles > 0) cpuInstance.current.onPrint(`\x1b[36m$ Cleaned up ${deletedFiles} virtual file(s).\x1b[0m\r\n`);
+    setDisassembly([]); 
+    setMemoryDump([]); 
+    syncUI();
+    
+    cpuInstance.current.onPrint('\r\n\x1b[32m[System]\x1b[0m MIPS32 OS Ready (Emulator Reset).\r\n');
+    cpuInstance.current.onPrint('\x1b[36m$ File di Workspace Anda tetap aman.\x1b[0m\r\n');
   };
 
   if (!isMounted) return <div className="flex h-screen w-screen items-center justify-center bg-[#09090b]"><span className="text-zinc-600 font-mono text-sm animate-pulse">Initializing IDE...</span></div>;
 
+  // =======================================================================
+  // RENDER UI (FLEXBOX MURNI ORISINAL)
+  // =======================================================================
   return (
     <div className="fixed inset-0 flex flex-col bg-[#09090b] text-zinc-300 font-sans w-full h-[100dvh] overflow-hidden">
       <style>{`
@@ -277,9 +429,8 @@ export default function MipsEmulatorPage() {
             <SheetTrigger className="md:hidden flex items-center justify-center w-8 h-8 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-md transition-colors">
               <Menu className="w-5 h-5"/>
             </SheetTrigger>
-            {/* Laci Sidebar HANYA UNTUK FILES sekarang */}
             <SheetContent side="left" className="p-0 bg-[#09090b] border-r-zinc-800 w-[280px] flex flex-col h-full overflow-hidden [&>button]:text-zinc-400 [&>button]:z-50">
-               <Sidebar />
+               <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} />
             </SheetContent>
           </Sheet>
 
@@ -290,7 +441,7 @@ export default function MipsEmulatorPage() {
             <span className="text-zinc-100 font-semibold hidden md:inline">MIPS Web IDE</span>
             <span className="text-zinc-600 hidden md:inline">/</span>
             <div className="flex items-center gap-1.5 bg-zinc-900/80 px-2 py-1 rounded border border-zinc-800 text-emerald-400">
-               <FileCode2 className="w-3.5 h-3.5" /> main.s
+               <FileCode2 className="w-3.5 h-3.5" /> {activeFile ? activeFile.split('/').pop() : 'No file'}
             </div>
           </div>
         </div>
@@ -320,34 +471,22 @@ export default function MipsEmulatorPage() {
         </div>
       </header>
 
-      {/* TABS HEADER GLOBAL (Mobile & Desktop disatukan) */}
+      {/* TABS HEADER GLOBAL (Mobile & Desktop) */}
       <div className="flex items-center px-2 pt-2 bg-[#09090b] border-b border-zinc-900 shrink-0 overflow-x-auto hide-scrollbar z-10 shadow-sm">
-        <button 
-          onClick={() => setActiveTab('code')}
-          className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'code' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
+        <button onClick={() => setActiveTab('code')} className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'code' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
           <Code2 className="w-3.5 h-3.5 mr-2" /> Code
         </button>
-        <button 
-          onClick={() => setActiveTab('disassembly')}
-          className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'disassembly' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
+        <button onClick={() => setActiveTab('disassembly')} className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'disassembly' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
           <FileCode2 className="w-3.5 h-3.5 mr-2" /> Disassembly
         </button>
-        <button 
-          onClick={() => setActiveTab('memory')}
-          className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'memory' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
+        <button onClick={() => setActiveTab('memory')} className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'memory' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
           <Database className="w-3.5 h-3.5 mr-2" /> Memory
         </button>
-        {/* TAB REGISTERS SEBELUM TERMINAL */}
-        <button 
-          onClick={() => setActiveTab('registers')}
-          className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'registers' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
+        <button onClick={() => setActiveTab('registers')} className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'registers' ? 'bg-[#0d0d0d] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
           <LayoutList className="w-3.5 h-3.5 mr-2" /> Registers
         </button>
-        {/* TAB TERMINAL HANYA MUNCUL DI MOBILE */}
         {isMobile && (
-          <button 
-            onClick={() => setActiveTab('terminal')}
-            className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'terminal' ? 'bg-[#0a0a0a] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
+          <button onClick={() => setActiveTab('terminal')} className={`flex items-center h-8 px-4 text-xs rounded-t-md border border-transparent transition-all whitespace-nowrap ${activeTab === 'terminal' ? 'bg-[#0a0a0a] text-emerald-500 border-zinc-800 border-b-transparent' : 'bg-zinc-900/50 text-zinc-400 hover:bg-zinc-800'}`}>
             <TerminalSquare className="w-3.5 h-3.5 mr-2" /> Terminal
           </button>
         )}
@@ -356,9 +495,9 @@ export default function MipsEmulatorPage() {
       {/* MAIN WORKSPACE */}
       <div className="flex-1 flex flex-row w-full min-h-0 bg-[#0d0d0d]">
         
-        {/* SIDEBAR PC (Hanya Files) */}
+        {/* SIDEBAR PC (File Explorer Kustom) */}
         <div className="hidden md:flex w-64 border-r border-zinc-900 bg-[#09090b] flex-col shrink-0">
-          <Sidebar />
+          <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} />
         </div>
 
         {/* CENTER + RIGHT AREA */}
@@ -367,20 +506,56 @@ export default function MipsEmulatorPage() {
           {/* CENTER PANEL (Code/Disassembly/Memory/Registers) */}
           <div className={`flex-1 flex-col min-w-0 h-full ${isMobile && activeTab === 'terminal' ? 'hidden' : 'flex'}`}>
             
-            {/* TAB CONTENTS */}
-            <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'code' ? 'flex' : 'hidden'}`}>
-              <EditorView code={code} setCode={setCode} setIsCompiled={setIsCompiled} editorBreakpoints={editorBreakpoints} setEditorBreakpoints={setEditorBreakpoints} isMobile={isMobile} />
+            {/* TAB CONTENTS CODE */}
+            <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] relative ${activeTab === 'code' ? 'flex' : 'hidden'}`}>
+              
+              {/* TAB FILE AKTIF */}
+              <div className="flex items-center bg-[#09090b] border-b border-zinc-800 overflow-x-auto shrink-0 custom-scrollbar">
+                {openTabs.map(file => (
+                  <div key={file} onClick={() => setActiveFile(file)} className={`group flex items-center gap-2 px-4 py-2 cursor-pointer border-r border-zinc-800 border-b-2 text-sm transition-colors min-w-max ${activeFile === file ? 'border-b-emerald-500 bg-[#1e1e1e] text-emerald-400' : 'border-b-transparent bg-[#09090b] text-zinc-500 hover:bg-[#18181b]'}`}>
+                    <FileIcon size={14} className={activeFile === file ? "text-emerald-500" : "text-zinc-500"} />
+                    <span>{file.split('/').pop()}</span>
+                    
+                    <button onClick={(e) => closeTab(file, e)} className={`ml-1 transition-opacity p-0.5 rounded ${activeFile === file ? 'opacity-100 text-zinc-400 hover:text-rose-400 hover:bg-zinc-700' : 'opacity-0 group-hover:opacity-100 hover:text-rose-400'}`} title="Tutup Tab">
+                      <X size={13} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* EDITOR VIEW */}
+              <div className="flex-1 relative">
+                <div className="absolute inset-0">
+                  {activeFile ? (
+                    <EditorView 
+                      key={activeFile} 
+                      code={fileContents[activeFile] || ''} 
+                      setCode={handleCodeChange} 
+                      setIsCompiled={setIsCompiled} 
+                      editorBreakpoints={editorBreakpoints} 
+                      setEditorBreakpoints={setEditorBreakpoints} 
+                      isMobile={isMobile} 
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center h-full text-zinc-500 font-mono text-sm bg-[#1e1e1e]">
+                      Pilih atau buat file untuk mulai mengedit.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
             
+            {/* DISASSEMBLY VIEW */}
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'disassembly' ? 'flex' : 'hidden'}`}>
               <DisassemblyView disassembly={disassembly} activePC={activePC} addressBreakpoints={addressBreakpoints} toggleBreakpoint={toggleBreakpoint} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
             </div>
 
+            {/* MEMORY VIEW */}
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'memory' ? 'flex' : 'hidden'}`}>
               <MemoryView memoryDump={memoryDump} memorySearchInput={memorySearchInput} setMemorySearchInput={setMemorySearchInput} handleSearchMemory={handleSearchMemory} handlePageMemory={handlePageMemory} viewFontSize={viewFontSize} setViewFontSize={setViewFontSize} />
             </div>
 
-            {/* KONTEN TAB REGISTERS */}
+            {/* REGISTERS VIEW */}
             <div className={`flex-1 min-h-0 flex-col w-full bg-[#0d0d0d] ${activeTab === 'registers' ? 'flex' : 'hidden'}`}>
               <RegistersView regValues={regValues} />
             </div>
@@ -412,7 +587,7 @@ export default function MipsEmulatorPage() {
               <FolderCode className="w-4 h-4" /> <span className="text-[10px] font-bold">Files</span>
             </SheetTrigger>
             <SheetContent side="left" className="p-0 bg-[#09090b] border-r-zinc-800 w-[280px] flex flex-col h-full overflow-hidden [&>button]:text-zinc-400 [&>button]:z-50">
-               <Sidebar />
+               <FileExplorer files={files} setFiles={setFiles} activeFile={activeFile} setActiveFile={handleOpenFile} fileContents={fileContents} setFileContents={setFileContents} />
             </SheetContent>
           </Sheet>
         </div>

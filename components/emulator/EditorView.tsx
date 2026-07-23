@@ -15,29 +15,34 @@ export function EditorView({ code, setCode, setIsCompiled, editorBreakpoints, se
   const editorRef = useRef<any>(null);
 
   // ---------------------------------------------------------------------------
-  // 0. PEREDAM ERROR "CANCELED" BAWAAN MONACO
-  // Ini akan mencegah terminal Next.js Anda dipenuhi log error merah.
+  // 1. PEMBUNGKAM ERROR NEXT.JS TINGKAT TINGGI
+  // Mencegat log 'operation is manually canceled' dari Web Worker Monaco
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
-      const reason = event.reason;
-      if (reason && (
-        reason.name === 'Cancel' || 
-        reason.message === 'Canceled' || 
-        reason.message === 'operation is manually canceled' || 
-        reason.type === 'cancelation'
-      )) {
-        // Hentikan pelemparan error ke konsol
-        event.preventDefault(); 
-      }
+    const originalConsoleError = console.error;
+    console.error = (...args: any[]) => {
+      const msg = args[0];
+      if (typeof msg === 'string' && msg.includes('operation is manually canceled')) return;
+      if (msg && msg.msg === 'operation is manually canceled') return;
+      originalConsoleError(...args);
     };
 
-    window.addEventListener('unhandledrejection', handleUnhandledRejection);
-    return () => window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    const handleRejection = (e: PromiseRejectionEvent) => {
+      if (e.reason && (e.reason.message === 'Canceled' || e.reason.message === 'operation is manually canceled')) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+      }
+    };
+    
+    window.addEventListener('unhandledrejection', handleRejection);
+    return () => {
+      console.error = originalConsoleError;
+      window.removeEventListener('unhandledrejection', handleRejection);
+    };
   }, []);
 
   // ---------------------------------------------------------------------------
-  // 1. INJEKSI SYNTAX HIGHLIGHTING MIPS
+  // 2. SYNTAX HIGHLIGHTING MIPS
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (monaco) {
@@ -58,12 +63,10 @@ export function EditorView({ code, setCode, setIsCompiled, editorBreakpoints, se
     }
   }, [monaco]);
 
-  // ---------------------------------------------------------------------------
-  // 2. PENANGANAN MOUNT & BREAKPOINTS
-  // ---------------------------------------------------------------------------
   const handleEditorDidMount = (editor: any, monacoInstance: any) => {
     editorRef.current = editor;
 
+    // Menangani klik margin untuk Breakpoint
     editor.onMouseDown((e: any) => {
       if (e.target.type === 2) { 
         const line = e.target.position.lineNumber;
@@ -78,7 +81,7 @@ export function EditorView({ code, setCode, setIsCompiled, editorBreakpoints, se
   };
 
   // ---------------------------------------------------------------------------
-  // 3. PENCEGAH KURSOR MELOMPAT
+  // 3. PENCEGAH KURSOR MELOMPAT (Semi-Controlled Pattern)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (editorRef.current && code !== editorRef.current.getValue()) {
@@ -111,7 +114,7 @@ export function EditorView({ code, setCode, setIsCompiled, editorBreakpoints, se
   }, [editorBreakpoints, monaco]);
 
   return (
-    <div className="w-full h-full relative bg-[#0d0d0d]">
+    <div className="w-full h-full relative bg-[#1e1e1e]">
       <Editor
         height="100%"
         language="mips"
@@ -120,23 +123,39 @@ export function EditorView({ code, setCode, setIsCompiled, editorBreakpoints, se
         onChange={handleEditorChange}
         onMount={handleEditorDidMount}
         options={{
+          // REKAYASA EDITOR UNTUK MOBILE & DESKTOP
           fontSize: isMobile ? 12 : 14,
           minimap: { enabled: !isMobile },
           wordWrap: 'on',
           lineNumbers: 'on',
           glyphMargin: true,
           folding: false,
-          lineDecorationsWidth: 10,
+          
+          // Menghemat ruang di HP
+          lineDecorationsWidth: isMobile ? 5 : 10,
+          lineNumbersMinChars: isMobile ? 3 : 5,
+          
           automaticLayout: true,
           scrollBeyondLastLine: false,
-          contextmenu: !isMobile,
+          
+          // PENTING: Aktifkan contextmenu agar menu Copy/Paste Monaco muncul saat Long Press di HP!
+          contextmenu: true, 
+          
+          // Mematikan fitur berat yang memicu error Worker di Mobile
           quickSuggestions: false,
           parameterHints: { enabled: false },
-          codeLens: false,
+          suggestOnTriggerCharacters: false,
+          acceptSuggestionOnEnter: "off",
+          tabCompletion: "off",
+          
+          // Mematikan hover tooltip di HP karena sering "nyangkut" di layar sentuh
+          hover: { enabled: (!isMobile ? "on" : "off") }, 
+          
           scrollbar: {
             useShadows: false,
-            verticalScrollbarSize: 10,
-            horizontalScrollbarSize: 10,
+            verticalScrollbarSize: isMobile ? 6 : 10,
+            horizontalScrollbarSize: isMobile ? 6 : 10,
+            alwaysConsumeMouseWheel: false,
           }
         }}
       />
